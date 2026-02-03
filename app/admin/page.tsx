@@ -104,7 +104,7 @@ export default function AdminPage() {
       ) : null}
 
       <p className="small">
-        Showing restaurants with <code>subscription_status = "active"</code>.
+        Showing restaurants with <code>subscription_status = active</code>.
       </p>
 
       <table className="table">
