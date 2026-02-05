@@ -63,6 +63,8 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     window.location.href = data.url;
   }
 
+  const rs = reservations ?? [];
+
   return (
     <main className="card">
       <div className="hstack" style={{ justifyContent: "space-between" }}>
@@ -70,10 +72,13 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
           <h1 style={{ marginTop: 0, marginBottom: 0 }}>
             {restaurant.name || "Your restaurant"}
           </h1>
+
+          {/* ✅ Avoid <a><button/></a> nesting */}
           <a href="/vendor/profile" className="small">
-            <button type="button">Edit</button>
+            Edit
           </a>
         </div>
+
         <button onClick={logout}>Logout</button>
       </div>
 
@@ -129,7 +134,14 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
             <span>Ready ✅</span>
           )}
         </p>
-        <a href="/vendor/reservations/new">
+
+        {/* ✅ Avoid nesting <a><button/></a> (interactive inside interactive) */}
+        <a
+          href={Boolean(gatingMessage) ? undefined : "/vendor/reservations/new"}
+          onClick={(e) => {
+            if (gatingMessage) e.preventDefault();
+          }}
+        >
           <button className="primary" disabled={Boolean(gatingMessage)}>
             Create new reservation
           </button>
@@ -145,41 +157,97 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
       <div className="spacer" />
 
       <h3>Recent reservations</h3>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Date</th>
-            <th>Name</th>
-            <th>Party</th>
-            <th>Deposit</th>
-            <th>Link</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(reservations ?? []).map((r: any) => (
-            <tr key={r.id}>
-              <td>{r.status}</td>
-              <td>{formatDateSafe(r.datetime_iso)}</td>
-              <td>{r.customer_name || "—"}</td>
-              <td>{r.party_size}</td>
-              <td>{formatEUR(r.deposit_cents)}</td>
-              <td>
+
+      {/* ✅ Desktop/tablet table (mobile hides this via CSS) */}
+      <div className="tableWrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Date</th>
+              <th>Name</th>
+              <th>Party</th>
+              <th>Deposit</th>
+              <th>Link</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rs.map((r: any) => (
+              <tr key={r.id}>
+                <td>{r.status}</td>
+                <td>{formatDateSafe(r.datetime_iso)}</td>
+                <td>{r.customer_name || "—"}</td>
+                <td>{r.party_size}</td>
+                <td>{formatEUR(r.deposit_cents)}</td>
+                <td>
+                  <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
+                    Open
+                  </a>
+                </td>
+              </tr>
+            ))}
+
+            {rs.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="small">
+                  No reservations yet.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ✅ Mobile-friendly cards (CSS shows this only on small screens) */}
+      <div className="resCards">
+        {rs.length === 0 ? (
+          <div className="small">No reservations yet.</div>
+        ) : (
+          rs.map((r: any) => (
+            <div key={r.id} className="resCard">
+              <div className="resTop">
+                <span className={r.status === "PAID" ? "badge ok" : "badge"}>
+                  <span className="dot" />
+                  {r.status}
+                </span>
                 <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
                   Open
                 </a>
-              </td>
-            </tr>
-          ))}
-          {(reservations ?? []).length === 0 ? (
-            <tr>
-              <td colSpan={6} className="small">
-                No reservations yet.
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+              </div>
+
+              <div className="resGrid">
+                <div>
+                  <div className="small">
+                    <b>Date</b>
+                  </div>
+                  <div className="small">{formatDateSafe(r.datetime_iso)}</div>
+                </div>
+
+                <div>
+                  <div className="small">
+                    <b>Deposit</b>
+                  </div>
+                  <div className="small">{formatEUR(r.deposit_cents)}</div>
+                </div>
+
+                <div>
+                  <div className="small">
+                    <b>Name</b>
+                  </div>
+                  <div className="small">{r.customer_name || "—"}</div>
+                </div>
+
+                <div>
+                  <div className="small">
+                    <b>Party</b>
+                  </div>
+                  <div className="small">{r.party_size}</div>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </main>
   );
 }
