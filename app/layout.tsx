@@ -1,3 +1,4 @@
+import Footer from "./_components/Footer";
 import "./globals.css";
 import React from "react";
 
@@ -12,9 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="container">
           {children}
-          <footer className="small" style={{ marginTop: 26, opacity: 0.9 }}>
-            MVP v3: Auth + BD en Supabase, suscripción (Stripe Billing), y cobros del restaurante (Stripe Connect).
-          </footer>
+          <Footer />
         </div>
       </body>
     </html>

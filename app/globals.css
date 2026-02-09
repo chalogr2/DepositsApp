@@ -11,44 +11,63 @@
 
 *{box-sizing:border-box}
 
-/* ✅ Prevent white top/bottom on mobile by ensuring the viewport background is always your app background */
+/* ✅ Always keep a dark background behind everything (prevents white bars on mobile) */
 html{
   height:100%;
   background: var(--bg);
+  color-scheme: dark;
 }
 
+/* ✅ Use dynamic viewport height when available (fixes iOS Safari "white gaps") */
 body{
-  min-height:100vh;
   margin:0;
+  min-height:100vh;
+  min-height:100dvh;
   font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
-  background: radial-gradient(1200px 600px at 15% 0%, #0f1a31, var(--bg));
+  background:
+    radial-gradient(1200px 600px at 15% 0%, #0f1a31, var(--bg));
+  background-color: var(--bg);
   color:var(--text);
+  overscroll-behavior-y: none; /* reduces overscroll white flash */
 }
 
 /* ✅ Helps some setups that render into a root container */
 #__next, #root{
   min-height:100vh;
+  min-height:100dvh;
   background: transparent;
 }
 
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 
-.container{max-width:1050px;margin:0 auto;padding:24px}
-@media(max-width:760px){.container{padding:16px}}
+/* Layout */
+.container{
+  max-width:1050px;
+  margin:0 auto;
+  padding:24px;
+}
+@media(max-width:760px){
+  .container{padding:16px}
+}
 
 .card{
   background:rgba(18,26,40,.9);
   border:1px solid var(--border);
   border-radius:16px;
   padding:18px;
-  box-shadow:0 10px 30px rgba(0,0,0,.35)
+  box-shadow:0 10px 30px rgba(0,0,0,.35);
 }
-@media(max-width:760px){.card{padding:14px}}
+@media(max-width:760px){
+  .card{padding:14px}
+}
 
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-@media(max-width:760px){.row{grid-template-columns:1fr}}
+@media(max-width:760px){
+  .row{grid-template-columns:1fr}
+}
 
+/* Forms */
 label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 input,textarea,select{
   width:100%;
@@ -57,21 +76,29 @@ input,textarea,select{
   border:1px solid var(--border);
   background:rgba(0,0,0,.25);
   color:var(--text);
-  outline:none
+  outline:none;
 }
 textarea{min-height:90px;resize:vertical}
 
+/* Buttons */
 button{
   cursor:pointer;
   padding:10px 14px;
   border-radius:12px;
   border:1px solid var(--border);
   background:rgba(255,255,255,.06);
-  color:var(--text)
+  color:var(--text);
 }
-button.primary{background:rgba(106,166,255,.18);border-color:rgba(106,166,255,.35)}
-button.danger{background:rgba(255,106,106,.18);border-color:rgba(255,106,106,.35)}
+button.primary{
+  background:rgba(106,166,255,.18);
+  border-color:rgba(106,166,255,.35);
+}
+button.danger{
+  background:rgba(255,106,106,.18);
+  border-color:rgba(255,106,106,.35);
+}
 
+/* Badges */
 .badge{
   display:inline-flex;
   align-items:center;
@@ -80,9 +107,14 @@ button.danger{background:rgba(255,106,106,.18);border-color:rgba(255,106,106,.35
   border-radius:999px;
   padding:6px 10px;
   font-size:12px;
-  color:var(--muted)
+  color:var(--muted);
 }
-.badge .dot{width:8px;height:8px;border-radius:999px;background:var(--muted)}
+.badge .dot{
+  width:8px;
+  height:8px;
+  border-radius:999px;
+  background:var(--muted);
+}
 .badge.ok .dot{background:var(--ok)}
 .badge.bad .dot{background:var(--danger)}
 
@@ -90,29 +122,61 @@ button.danger{background:rgba(255,106,106,.18);border-color:rgba(255,106,106,.35
 .hstack{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .spacer{height:12px}
 
-.table{width:100%;border-collapse:collapse;margin-top:10px}
-.table th,.table td{border-bottom:1px solid var(--border);padding:10px 8px;text-align:left;font-size:14px}
-.table th{color:var(--muted);font-weight:600;font-size:13px}
+/* Tables */
+.table{
+  width:100%;
+  border-collapse:collapse;
+  margin-top:10px;
+}
+.table th,.table td{
+  border-bottom:1px solid var(--border);
+  padding:10px 8px;
+  text-align:left;
+  font-size:14px;
+  vertical-align:top;
+}
+.table th{
+  color:var(--muted);
+  font-weight:600;
+  font-size:13px;
+  white-space:nowrap;
+}
 
+/* ✅ Prevent long content from breaking layout */
+.table td{
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Code */
 code{
   background:rgba(0,0,0,.25);
   padding:2px 6px;
   border-radius:8px;
-  border:1px solid var(--border)
+  border:1px solid var(--border);
 }
 
 /* =========================
    ✅ Mobile reservations UI
    ========================= */
 
-/* Wrap tables in a scroll container so they never overflow on mobile */
+/* ✅ Wrap tables in a scroll container so they never overflow on small screens */
 .tableWrap{
   overflow-x:auto;
   -webkit-overflow-scrolling:touch;
   border-radius:12px;
+  border:1px solid var(--border);
 }
 
-/* Mobile cards (if you use the card layout I gave you) */
+/* Make the table look good inside the scroll wrapper */
+.tableWrap .table{
+  margin-top:0;
+  min-width: 720px; /* gives the table room; wrapper handles scroll */
+}
+
+/* Mobile cards (if you use the card layout) */
 .resCards{display:none;margin-top:12px}
 .resCard{
   background:rgba(18,26,40,.6);
@@ -135,7 +199,7 @@ code{
 }
 
 @media(max-width:720px){
-  /* If you keep a tableWrap + cards approach, hide table on small screens */
+  /* If you keep the tableWrap + cards approach, hide table on small screens */
   .tableWrap{display:none}
   .resCards{display:block}
 }
