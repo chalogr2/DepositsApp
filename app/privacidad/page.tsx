@@ -1,56 +1,74 @@
-export default function AvisoLegalPage() {
+export default function PrivacidadPage() {
   return (
     <main className="card">
-      <h1 style={{ marginTop: 0 }}>Aviso legal</h1>
+      <h1 style={{ marginTop: 0 }}>Política de privacidad</h1>
 
       <p className="small">
-        En cumplimiento del deber de información, se facilitan a continuación los datos del titular de este sitio web.
+        Esta política describe cómo tratamos los datos personales en el marco del servicio.
       </p>
 
-      <h3>1. Datos del titular</h3>
+      <h3>1. Responsable del tratamiento</h3>
       <ul>
-        <li><b>Titular:</b> TU_EMPRESA / TU_NOMBRE_COMERCIAL</li>
+        <li><b>Responsable:</b> TU_EMPRESA</li>
         <li><b>NIF/CIF:</b> TU_NIF</li>
-        <li><b>Domicilio:</b> TU_DIRECCIÓN (España)</li>
         <li><b>Email:</b> TU_EMAIL</li>
-        <li><b>Teléfono:</b> TU_TELÉFONO (opcional)</li>
-        <li><b>Registro Mercantil / datos registrales:</b> (si aplica)</li>
       </ul>
 
-      <h3>2. Objeto</h3>
+      <h3>2. Datos tratados</h3>
+      <ul>
+        <li>Datos de cuenta: email, identificadores de usuario.</li>
+        <li>Datos del restaurante: nombre, configuración, reservas creadas.</li>
+        <li>Datos de facturación/pagos: se gestionan a través de Stripe (no almacenamos números de tarjeta).</li>
+        <li>Datos técnicos mínimos necesarios para autenticación y seguridad.</li>
+      </ul>
+
+      <h3>3. Finalidades</h3>
+      <ul>
+        <li>Prestar el servicio (registro, acceso, creación/gestión de reservas, panel).</li>
+        <li>Gestión de suscripciones y facturación.</li>
+        <li>Soporte y comunicaciones operativas.</li>
+        <li>Seguridad, prevención de fraude y cumplimiento.</li>
+      </ul>
+
+      <h3>4. Base jurídica</h3>
+      <ul>
+        <li>Ejecución de un contrato (prestación del servicio).</li>
+        <li>Cumplimiento de obligaciones legales (fiscales/contables si aplica).</li>
+        <li>Interés legítimo (seguridad, mejora del servicio) cuando corresponda.</li>
+      </ul>
+
+      <h3>5. Destinatarios y encargados</h3>
       <p className="small">
-        Este sitio ofrece un servicio para que restaurantes creen enlaces de pago para depósitos de reserva y
-        gestionen su actividad desde un panel.
+        Usamos proveedores para operar el servicio:
+      </p>
+      <ul>
+        <li><b>Stripe</b>: gestión de pagos y facturación.</li>
+        <li><b>Supabase</b>: autenticación y base de datos.</li>
+        <li><b>Vercel</b>: hosting y ejecución del sitio.</li>
+      </ul>
+
+      <h3>6. Transferencias internacionales</h3>
+      <p className="small">
+        Algunos proveedores pueden tratar datos fuera del EEE. En su caso, se aplicarán garantías adecuadas
+        (p. ej., cláusulas contractuales tipo) según corresponda.
       </p>
 
-      <h3>3. Condiciones de uso</h3>
+      <h3>7. Plazos de conservación</h3>
       <p className="small">
-        El acceso y uso del sitio atribuye la condición de usuario e implica la aceptación de estas condiciones y de los
-        documentos legales publicados. El usuario se compromete a un uso diligente y lícito.
+        Conservamos los datos mientras exista la cuenta o sea necesario para prestar el servicio y cumplir obligaciones
+        legales. Posteriormente, se bloquearán o eliminarán conforme a la normativa.
       </p>
 
-      <h3>4. Propiedad intelectual</h3>
+      <h3>8. Derechos</h3>
       <p className="small">
-        Salvo indicación expresa, los contenidos, diseño, código y elementos del sitio están protegidos por derechos de
-        propiedad intelectual. Queda prohibida su reproducción sin autorización.
+        Puedes solicitar acceso, rectificación, supresión, oposición, limitación y portabilidad escribiendo a TU_EMAIL.
+        También puedes reclamar ante la autoridad de control competente (AEPD en España).
       </p>
 
-      <h3>5. Responsabilidad</h3>
+      <h3>9. Seguridad</h3>
       <p className="small">
-        El titular no se responsabiliza del uso indebido del sitio ni de daños derivados de interrupciones, errores o
-        virus, salvo que la ley lo exija.
-      </p>
-
-      <h3>6. Enlaces</h3>
-      <p className="small">
-        El sitio puede incluir enlaces a terceros. El titular no se hace responsable de contenidos o políticas de dichos
-        sitios.
-      </p>
-
-      <h3>7. Legislación aplicable</h3>
-      <p className="small">
-        Estas condiciones se regirán por la normativa española. Para la resolución de conflictos, se someterán a los
-        juzgados y tribunales que correspondan conforme a la ley.
+        Aplicamos medidas técnicas y organizativas razonables para proteger los datos. Aun así, ningún sistema es 100%
+        infalible.
       </p>
     </main>
   );

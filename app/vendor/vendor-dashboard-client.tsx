@@ -9,13 +9,13 @@ function formatEUR(cents: number) {
 function statusLabel(s: string) {
   switch (s) {
     case "PAID":
-      return "PAGADO";
+      return "✅ PAGADO";
     case "PENDING":
-      return "PENDIENTE";
+      return "❌ PENDIENTE";
     case "CANCELED":
-      return "CANCELADO";
+      return "❌ CANCELADO";
     case "EXPIRED":
-      return "EXPIRADA";
+      return "❌ EXPIRADA";
     default:
       return s || "—";
   }
@@ -28,6 +28,9 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
   // hydration-safe date formatting
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // simple "copied" feedback per reservation id
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const subActive =
     restaurant.subscription_status === "active" &&
@@ -78,6 +81,41 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     window.location.href = data.url;
   }
 
+  function reservationUrl(id: string) {
+    // absolute URL is nicer for sharing & copying
+    if (typeof window === "undefined") return `/r/${id}`;
+    return `${window.location.origin}/r/${id}`;
+  }
+
+  async function copyLink(id: string) {
+    const url = reservationUrl(id);
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        // fallback
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.top = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+
+      setCopiedId(id);
+      window.setTimeout(() => {
+        setCopiedId((cur) => (cur === id ? null : cur));
+      }, 1200);
+    } catch {
+      setErr("No se pudo copiar el enlace. Intenta de nuevo.");
+    }
+  }
+
   const rs = reservations ?? [];
 
   return (
@@ -86,7 +124,6 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
         <div className="hstack" style={{ gap: 12, alignItems: "baseline" }}>
           <h1 style={{ marginTop: 0, marginBottom: 0 }}>{restaurant.name || "Tu restaurante"}</h1>
 
-          {/* ✅ Avoid <a><button/></a> nesting */}
           <a href="/vendor/profile" className="small">
             Editar
           </a>
@@ -148,7 +185,6 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
           )}
         </p>
 
-        {/* ✅ Avoid nesting <a><button/></a> (interactive inside interactive) */}
         <a
           href={Boolean(gatingMessage) ? undefined : "/vendor/reservations/new"}
           onClick={(e) => {
@@ -193,9 +229,20 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
                 <td>{r.party_size}</td>
                 <td>{formatEUR(r.deposit_cents)}</td>
                 <td>
-                  <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
-                    Abrir
-                  </a>
+                  <div className="hstack" style={{ gap: 8, flexWrap: "nowrap" }}>
+                    <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
+                      Abrir
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => copyLink(r.id)}
+                      style={{ padding: "6px 10px" }}
+                      aria-label="Copiar enlace"
+                      title="Copiar enlace"
+                    >
+                      {copiedId === r.id ? "¡Copiado!" : "Copiar"}
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -223,9 +270,21 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
                   <span className="dot" />
                   {statusLabel(r.status)}
                 </span>
-                <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
-                  Abrir
-                </a>
+
+                <div className="hstack" style={{ gap: 8, flexWrap: "nowrap" }}>
+                  <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
+                    Abrir
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => copyLink(r.id)}
+                    style={{ padding: "6px 10px" }}
+                    aria-label="Copiar enlace"
+                    title="Copiar enlace"
+                  >
+                    {copiedId === r.id ? "¡Copiado!" : "Copiar"}
+                  </button>
+                </div>
               </div>
 
               <div className="resGrid">

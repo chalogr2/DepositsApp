@@ -5,6 +5,23 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
 
+function statusLabel(raw: unknown) {
+  const s = String(raw ?? "").toUpperCase();
+
+  switch (s) {
+    case "PAID":
+      return "✅ PAGADO";
+    case "PENDING":
+      return "❌ PENDIENTE";
+    case "CANCELED":
+      return "❌ CANCELADO";
+    case "EXPIRED":
+      return "❌ EXPIRADA";
+    default:
+      return s || "—";
+  }
+}
+
 export default async function ReservaPage({ params }: { params: { id: string } }) {
   const admin = supabaseAdmin();
 
@@ -40,7 +57,7 @@ export default async function ReservaPage({ params }: { params: { id: string } }
       <div className="hstack">
         <span className={isPagado ? "badge ok" : "badge"}>
           <span className="dot" />
-          Estado: {String(reservation.status ?? "")}
+          Estado: {statusLabel(reservation.status)}
         </span>
 
         <span className="badge">
@@ -89,7 +106,11 @@ export default async function ReservaPage({ params }: { params: { id: string } }
 
       <div className="spacer" />
 
-      {isPagado ? <p className="small">Ya está pagado ✅</p> : <PayButton reservationId={reservation.id} />}
+      {isPagado ? (
+        <p className="small">Ya está pagado ✅</p>
+      ) : (
+        <PayButton reservationId={reservation.id} />
+      )}
 
       <div className="spacer" />
       <p className="small">Los reembolsos los gestiona el restaurante y vuelven a la tarjeta original.</p>
