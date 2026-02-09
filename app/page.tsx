@@ -5,6 +5,7 @@ export default function HomePage() {
         <div className="heroGrid">
           <div>
             <h1 className="heroTitle">Depósitos para reservas, sin complicaciones</h1>
+
             <p className="heroSub">
               Crea enlaces de pago por reserva en segundos, cobra depósitos con Stripe y gestiona todo desde
               un panel simple. Ideal para restaurantes en España.
@@ -17,11 +18,11 @@ export default function HomePage() {
             </div>
 
             <div className="ctaRow">
-              <a href="/vendor">
-                <button className="primary" type="button">Entrar al portal</button>
+              <a className="btn primary" href="/vendor">
+                Entrar al portal
               </a>
-              <a href="/vendor" className="small">
-                <button className="secondary" type="button">Crear cuenta / Acceder</button>
+              <a className="btn secondary" href="/vendor">
+                Crear cuenta / Acceder
               </a>
             </div>
 
@@ -39,20 +40,6 @@ export default function HomePage() {
           </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="footer">
-        <div className="footerInner">
-          <div className="footerBrand">© {new Date().getFullYear()} Deposits App</div>
-
-          <nav className="footerLinks" aria-label="Enlaces legales">
-            <a href="/legal/terminos">Términos</a>
-            <a href="/legal/privacidad">Privacidad</a>
-            <a href="/legal/cookies">Cookies</a>
-            <a href="/legal/aviso-legal">Aviso legal</a>
-          </nav>
-        </div>
-      </footer>
     </div>
   );
 }
