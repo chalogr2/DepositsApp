@@ -22,7 +22,11 @@ export default function SuccessPage({ searchParams }: { searchParams?: { rid?: s
       <h1 style={{ marginTop: 0 }}>Resultado del pago</h1>
       <p className="small">{msg}</p>
       {rid ? <p className="small">Reserva: <code>{rid}</code></p> : null}
-      <p className="small"><a href="/">Volver al inicio</a></p>
+      {rid ? (
+  <p className="small">
+    <a href={`/r/${rid}`}>Volver a la reserva</a>
+  </p>
+) : null}
     </main>
   );
 }

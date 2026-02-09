@@ -6,6 +6,21 @@ function formatEUR(cents: number) {
   return `€${(cents / 100).toFixed(2)}`;
 }
 
+function statusLabel(s: string) {
+  switch (s) {
+    case "PAID":
+      return "PAGADO";
+    case "PENDING":
+      return "PENDIENTE";
+    case "CANCELED":
+      return "CANCELADO";
+    case "EXPIRED":
+      return "EXPIRADA";
+    default:
+      return s || "—";
+  }
+}
+
 export default function VendorDashboardClient({ userEmail, restaurant, reservations }: any) {
   const supabase = supabaseBrowser();
   const [err, setErr] = useState<string | null>(null);
@@ -69,13 +84,11 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     <main className="card">
       <div className="hstack" style={{ justifyContent: "space-between" }}>
         <div className="hstack" style={{ gap: 12, alignItems: "baseline" }}>
-          <h1 style={{ marginTop: 0, marginBottom: 0 }}>
-            {restaurant.name || "Tu restaurante"}
-          </h1>
+          <h1 style={{ marginTop: 0, marginBottom: 0 }}>{restaurant.name || "Tu restaurante"}</h1>
 
           {/* ✅ Avoid <a><button/></a> nesting */}
           <a href="/vendor/profile" className="small">
-            Editarar
+            Editar
           </a>
         </div>
 
@@ -174,14 +187,14 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
           <tbody>
             {rs.map((r: any) => (
               <tr key={r.id}>
-                <td>{r.status}</td>
+                <td>{statusLabel(r.status)}</td>
                 <td>{formatDateSafe(r.datetime_iso)}</td>
                 <td>{r.customer_name || "—"}</td>
                 <td>{r.party_size}</td>
                 <td>{formatEUR(r.deposit_cents)}</td>
                 <td>
                   <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
-                    Open
+                    Abrir
                   </a>
                 </td>
               </tr>
@@ -208,38 +221,38 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
               <div className="resTop">
                 <span className={r.status === "PAID" ? "badge ok" : "badge"}>
                   <span className="dot" />
-                  {r.status}
+                  {statusLabel(r.status)}
                 </span>
                 <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
-                  Open
+                  Abrir
                 </a>
               </div>
 
               <div className="resGrid">
                 <div>
                   <div className="small">
-                    <b>Date</b>
+                    <b>Fecha</b>
                   </div>
                   <div className="small">{formatDateSafe(r.datetime_iso)}</div>
                 </div>
 
                 <div>
                   <div className="small">
-                    <b>Deposit</b>
+                    <b>Depósito</b>
                   </div>
                   <div className="small">{formatEUR(r.deposit_cents)}</div>
                 </div>
 
                 <div>
                   <div className="small">
-                    <b>Name</b>
+                    <b>Nombre</b>
                   </div>
                   <div className="small">{r.customer_name || "—"}</div>
                 </div>
 
                 <div>
                   <div className="small">
-                    <b>Party</b>
+                    <b>Comensales</b>
                   </div>
                   <div className="small">{r.party_size}</div>
                 </div>
