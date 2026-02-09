@@ -15,10 +15,10 @@ export default async function VendorPage() {
   if (!user) {
     return (
       <main className="card">
-        <h1 style={{ marginTop: 0 }}>Restaurant portal</h1>
-        <p className="small">You’re not logged in.</p>
+        <h1 style={{ marginTop: 0 }}>Portal del restaurante</h1>
+        <p className="small">No has iniciado sesión.</p>
         <a href="/vendor/login">
-          <button className="primary">Login / Register</button>
+          <button className="primary">Iniciar sesión / Registrarse</button>
         </a>
       </main>
     );
@@ -35,9 +35,9 @@ export default async function VendorPage() {
   if (error || !restaurant) {
     return (
       <main className="card">
-        <h1 style={{ marginTop: 0 }}>Restaurant portal</h1>
+        <h1 style={{ marginTop: 0 }}>Portal del restaurante</h1>
         <p className="small" style={{ color: "var(--danger)" }}>
-          Failed to load restaurant profile. Verify Supabase SQL + RLS.
+          No se pudo cargar el perfil del restaurante. Verifica el SQL de Supabase y las políticas RLS.
         </p>
       </main>
     );

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { stripePlatform, asConnectedAccount, appBaseUrl } from "@/lib/stripe";
+import { stripePlatform, asConnectedAccount } from "@/lib/stripe";
 
 const schema = z.object({ reservationId: z.string().uuid() });
 
@@ -22,7 +22,8 @@ export async function POST(req: Request) {
   }
 
   const stripe = stripePlatform();
-  const baseUrl = appBaseUrl();
+  // Use the current deployment origin so Stripe always redirects back to the right site
+  const baseUrl = new URL(req.url).origin;
 
   const session = await stripe.checkout.sessions.create(
     {

@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
 
-export default async function ReservationPage({ params }: { params: { id: string } }) {
+export default async function ReservaPage({ params }: { params: { id: string } }) {
   const admin = supabaseAdmin();
 
   const { data: reservation } = await admin
@@ -17,8 +17,8 @@ export default async function ReservationPage({ params }: { params: { id: string
   if (!reservation) {
     return (
       <main className="card">
-        <h1 style={{ marginTop: 0 }}>Reservation not found</h1>
-        <p className="small">Invalid link.</p>
+        <h1 style={{ marginTop: 0 }}>Reserva no encontrada</h1>
+        <p className="small">Enlace inválido.</p>
       </main>
     );
   }
@@ -31,31 +31,31 @@ export default async function ReservationPage({ params }: { params: { id: string
 
   // Normalize status to avoid case mismatches ("PAID" vs "paid")
   const status = String(reservation.status ?? "").toLowerCase();
-  const isPaid = status === "paid";
+  const isPagado = status === "paid";
 
   return (
     <main className="card">
-      <h1 style={{ marginTop: 0 }}>Confirm your reservation</h1>
+      <h1 style={{ marginTop: 0 }}>Confirma tu reserva</h1>
 
       <div className="hstack">
-        <span className={isPaid ? "badge ok" : "badge"}>
+        <span className={isPagado ? "badge ok" : "badge"}>
           <span className="dot" />
-          Status: {String(reservation.status ?? "")}
+          Estado: {String(reservation.status ?? "")}
         </span>
 
         <span className="badge">
           <span className="dot" />
-          Restaurant: {restaurant?.name ?? "—"}
+          Restaurante: {restaurant?.name ?? "—"}
         </span>
 
         <span className="badge">
           <span className="dot" />
-          Party: {reservation.party_size}
+          Comensales: {reservation.party_size}
         </span>
 
         <span className="badge">
           <span className="dot" />
-          Deposit: €{(reservation.deposit_cents / 100).toFixed(2)}
+          Depósito: €{(reservation.deposit_cents / 100).toFixed(2)}
         </span>
       </div>
 
@@ -64,13 +64,13 @@ export default async function ReservationPage({ params }: { params: { id: string
       <div className="row">
         <div>
           <div className="small">
-            <b>Name</b>
+            <b>Nombre</b>
           </div>
           <div className="small">{reservation.customer_name || "—"}</div>
         </div>
         <div>
           <div className="small">
-            <b>Date & time</b>
+            <b>Fecha y hora</b>
           </div>
           <div className="small">{reservation.datetime_iso}</div>
         </div>
@@ -80,7 +80,7 @@ export default async function ReservationPage({ params }: { params: { id: string
 
       <div>
         <div className="small">
-          <b>Refund policy</b>
+          <b>Política de reembolso</b>
         </div>
         <div className="small" style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>
           {reservation.policy_text}
@@ -89,10 +89,10 @@ export default async function ReservationPage({ params }: { params: { id: string
 
       <div className="spacer" />
 
-      {isPaid ? <p className="small">Already paid ✅</p> : <PayButton reservationId={reservation.id} />}
+      {isPagado ? <p className="small">Ya está pagado ✅</p> : <PayButton reservationId={reservation.id} />}
 
       <div className="spacer" />
-      <p className="small">Refunds are issued by the restaurant and return to the original card.</p>
+      <p className="small">Los reembolsos los gestiona el restaurante y vuelven a la tarjeta original.</p>
     </main>
   );
 }

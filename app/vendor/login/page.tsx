@@ -33,7 +33,7 @@ export default function VendorLoginPage() {
       if (error) return setErr(error.message);
       setSent(true);
     } catch (e: any) {
-      setErr(e?.message ?? "Failed to send link");
+      setErr(e?.message ?? "No se pudo enviar el enlace");
     }
   }
 
@@ -42,12 +42,12 @@ export default function VendorLoginPage() {
 
   return (
     <main className="card">
-      <h1 style={{ marginTop: 0 }}>Restaurant login</h1>
+      <h1 style={{ marginTop: 0 }}>Acceso del restaurante</h1>
       <p className="small">
-        Enter your email. We’ll send a magic link (auto-registers if new).
+        Introduce tu correo. Te enviaremos un enlace mágico (se registra automáticamente si eres nuevo).
       </p>
 
-      <label>Email</label>
+      <label>Correo electrónico</label>
       <input
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -60,10 +60,10 @@ export default function VendorLoginPage() {
           onClick={sendLink}
           disabled={!email || sent || !supabase}
         >
-          {sent ? "Link sent ✅" : "Send magic link"}
+          {sent ? "Enlace enviado ✅" : "Enviar enlace mágico"}
         </button>
         <a className="small" href="/vendor">
-          Back
+          Volver
         </a>
       </div>
 
@@ -74,7 +74,7 @@ export default function VendorLoginPage() {
       ) : null}
 
       {sent ? (
-        <p className="small">Check your inbox and click the link.</p>
+        <p className="small">Revisa tu bandeja de entrada y haz clic en el enlace.</p>
       ) : null}
     </main>
   );

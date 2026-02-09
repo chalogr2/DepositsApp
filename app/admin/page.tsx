@@ -5,10 +5,10 @@ type AnyRow = Record<string, any>;
 
 export default function AdminPage() {
   const [authed, setAuthed] = useState(false);
-  const [password, setPassword] = useState("");
+  const [password, setContraseña] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
-  const [restaurants, setRestaurants] = useState<AnyRow[]>([]);
+  const [restaurants, setRestaurantes] = useState<AnyRow[]>([]);
   const [loading, setLoading] = useState(false);
 
   async function login() {
@@ -20,10 +20,10 @@ export default function AdminPage() {
         body: JSON.stringify({ password }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return setErr(data?.error ?? "Login failed");
+      if (!res.ok) return setErr(data?.error ?? "Inicio de sesión fallido");
       setAuthed(true);
     } catch (e: any) {
-      setErr(e?.message ?? "Login request failed");
+      setErr(e?.message ?? "La solicitud de inicio de sesión falló");
     }
   }
 
@@ -36,15 +36,15 @@ export default function AdminPage() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setErr(data?.error ?? "Failed to load");
-        setRestaurants([]);
+        setErr(data?.error ?? "No se pudo cargar");
+        setRestaurantes([]);
         return;
       }
 
-      setRestaurants(Array.isArray(data?.restaurants) ? data.restaurants : []);
+      setRestaurantes(Array.isArray(data?.restaurants) ? data.restaurants : []);
     } catch (e: any) {
-      setErr(e?.message ?? "Fetch failed");
-      setRestaurants([]);
+      setErr(e?.message ?? "La solicitud falló");
+      setRestaurantes([]);
     } finally {
       setLoading(false);
     }
@@ -60,16 +60,16 @@ export default function AdminPage() {
       <main className="card">
         <h1 style={{ marginTop: 0 }}>Admin</h1>
         <p className="small">
-          Demo password from <code>.env</code>.
+          Contraseña de demo en <code>.env</code>.
         </p>
 
         <div className="row">
           <div>
-            <label>Password</label>
+            <label>Contraseña</label>
             <input
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => setContraseña(e.target.value)}
             />
           </div>
           <div style={{ alignSelf: "end" }}>
@@ -91,9 +91,9 @@ export default function AdminPage() {
   return (
     <main className="card">
       <div className="hstack" style={{ justifyContent: "space-between" }}>
-        <h1 style={{ marginTop: 0 }}>Active restaurants</h1>
+        <h1 style={{ marginTop: 0 }}>Restaurantes activos</h1>
         <button onClick={load} disabled={loading}>
-          {loading ? "Refreshing..." : "Refresh"}
+          {loading ? "Actualizando..." : "Actualizar"}
         </button>
       </div>
 
@@ -104,18 +104,18 @@ export default function AdminPage() {
       ) : null}
 
       <p className="small">
-        Showing restaurants with <code>subscription_status = active</code>.
+        Mostrando restaurantes con <code>subscription_status = active</code>.
       </p>
 
       <table className="table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Owner</th>
-            <th>Stripe acct</th>
-            <th>Stripe ready</th>
-            <th>Sub</th>
-            <th>Period end</th>
+            <th>Nombre</th>
+            <th>Propietario</th>
+            <th>Cuenta Stripe</th>
+            <th>Stripe listo</th>
+            <th>Suscripción</th>
+            <th>Fin de periodo</th>
           </tr>
         </thead>
         <tbody>
@@ -137,7 +137,7 @@ export default function AdminPage() {
           {(restaurants ?? []).length === 0 ? (
             <tr>
               <td colSpan={6} className="small">
-                No active restaurants yet.
+                Aún no hay restaurantes activos.
               </td>
             </tr>
           ) : null}

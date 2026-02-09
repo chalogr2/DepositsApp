@@ -7,15 +7,15 @@ export default async function NewReservationPage() {
   if (!user) {
     return (
       <main className="card">
-        <h1 style={{ marginTop: 0 }}>Create reservation</h1>
-        <p className="small">Please <a href="/vendor/login">login</a> first.</p>
+        <h1 style={{ marginTop: 0 }}>Crear reserva</h1>
+        <p className="small">Por favor <a href="/vendor/login">inicia sesión</a> primero.</p>
       </main>
     );
   }
 
   const { data: restaurant } = await supabase.from("restaurants").select("*").eq("owner_user_id", user.id).single();
   if (!restaurant) {
-    return <main className="card"><h1 style={{ marginTop: 0 }}>Create reservation</h1><p className="small" style={{ color: "var(--danger)" }}>Restaurant profile missing.</p></main>;
+    return <main className="card"><h1 style={{ marginTop: 0 }}>Crear reserva</h1><p className="small" style={{ color: "var(--danger)" }}>Falta el perfil del restaurante.</p></main>;
   }
 
   const subActive = restaurant.subscription_status === "active" &&

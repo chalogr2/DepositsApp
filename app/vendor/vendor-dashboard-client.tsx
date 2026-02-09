@@ -24,8 +24,8 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     Boolean(restaurant.stripe_account_id) && Boolean(restaurant.stripe_onboarding_complete);
 
   const gatingMessage = useMemo(() => {
-    if (!subActive) return "Subscribe to unlock creating payment links.";
-    if (!connectReady) return "Connect Stripe to accept card payments.";
+    if (!subActive) return "Suscríbete para desbloquear la creación de enlaces de pago.";
+    if (!connectReady) return "Conecta Stripe para aceptar pagos con tarjeta.";
     return null;
   }, [subActive, connectReady]);
 
@@ -43,7 +43,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     setErr(null);
     const res = await fetch("/api/vendor/stripe/connect/onboard", { method: "POST" });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setErr(data?.error ?? "Failed to start onboarding");
+    if (!res.ok) return setErr(data?.error ?? "No se pudo iniciar la conexión");
     window.location.href = data.url;
   }
 
@@ -51,7 +51,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     setErr(null);
     const res = await fetch("/api/vendor/stripe/connect/manage", { method: "POST" });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setErr(data?.error ?? "Failed to open Stripe dashboard");
+    if (!res.ok) return setErr(data?.error ?? "No se pudo abrir el panel de Stripe");
     window.location.href = data.deep_link || data.url;
   }
 
@@ -59,7 +59,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     setErr(null);
     const res = await fetch("/api/vendor/billing/subscribe", { method: "POST" });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setErr(data?.error ?? "Failed to start subscription");
+    if (!res.ok) return setErr(data?.error ?? "No se pudo iniciar la suscripción");
     window.location.href = data.url;
   }
 
@@ -70,30 +70,30 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
       <div className="hstack" style={{ justifyContent: "space-between" }}>
         <div className="hstack" style={{ gap: 12, alignItems: "baseline" }}>
           <h1 style={{ marginTop: 0, marginBottom: 0 }}>
-            {restaurant.name || "Your restaurant"}
+            {restaurant.name || "Tu restaurante"}
           </h1>
 
           {/* ✅ Avoid <a><button/></a> nesting */}
           <a href="/vendor/profile" className="small">
-            Edit
+            Editarar
           </a>
         </div>
 
-        <button onClick={logout}>Logout</button>
+        <button onClick={logout}>Cerrar sesión</button>
       </div>
 
       <p className="small">
-        Logged in as: <code>{userEmail}</code>
+        Conectado como: <code>{userEmail}</code>
       </p>
 
       <div className="hstack">
         <span className={subActive ? "badge ok" : "badge bad"}>
           <span className="dot" />
-          Subscription: {restaurant.subscription_status}
+          Suscripción: {restaurant.subscription_status}
         </span>
         <span className={connectReady ? "badge ok" : "badge bad"}>
           <span className="dot" />
-          Stripe: {connectReady ? "connected" : "not connected"}
+          Stripe: {connectReady ? "conectado" : "no conectado"}
         </span>
       </div>
 
@@ -101,24 +101,24 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
 
       <div className="row">
         <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-          <h3 style={{ marginTop: 0 }}>1) Subscription</h3>
-          <p className="small">Required to create deposit links.</p>
+          <h3 style={{ marginTop: 0 }}>1) Suscripción</h3>
+          <p className="small">Requerido para crear enlaces de depósito.</p>
           <button className="primary" onClick={subscribe}>
-            Subscribe / Manage billing
+            Suscribirse / Gestionar facturación
           </button>
         </div>
 
         <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-          <h3 style={{ marginTop: 0 }}>2) Stripe account</h3>
+          <h3 style={{ marginTop: 0 }}>2) Cuenta de Stripe</h3>
 
           <p className="small">
             {connectReady
-              ? "Stripe is connected. Manage payouts and refunds in your Stripe Dashboard."
-              : "You are the merchant of record for guest payments."}
+              ? "Stripe está conectado. Gestiona pagos, reembolsos y ajustes en tu Panel de Stripe."
+              : "Eres el comercio responsable de los cobros a los clientes."}
           </p>
 
           <button className="primary" onClick={connectReady ? manageConnect : startConnect}>
-            {connectReady ? "Manage Stripe account" : "Start Stripe onboarding"}
+            {connectReady ? "Gestionar cuenta de Stripe" : "Conectar Stripe"}
           </button>
         </div>
       </div>
@@ -126,12 +126,12 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
       <div className="spacer" />
 
       <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-        <h3 style={{ marginTop: 0 }}>3) Create reservation link</h3>
+        <h3 style={{ marginTop: 0 }}>3) Crear enlace de reserva</h3>
         <p className="small">
           {gatingMessage ? (
             <span style={{ color: "var(--danger)" }}>{gatingMessage}</span>
           ) : (
-            <span>Ready ✅</span>
+            <span>Listo ✅</span>
           )}
         </p>
 
@@ -143,7 +143,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
           }}
         >
           <button className="primary" disabled={Boolean(gatingMessage)}>
-            Create new reservation
+            Crear nueva reserva
           </button>
         </a>
       </div>
@@ -156,19 +156,19 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
 
       <div className="spacer" />
 
-      <h3>Recent reservations</h3>
+      <h3>Reservas recientes</h3>
 
       {/* ✅ Desktop/tablet table (mobile hides this via CSS) */}
       <div className="tableWrap">
         <table className="table">
           <thead>
             <tr>
-              <th>Status</th>
-              <th>Date</th>
-              <th>Name</th>
-              <th>Party</th>
-              <th>Deposit</th>
-              <th>Link</th>
+              <th>Estado</th>
+              <th>Fecha</th>
+              <th>Nombre</th>
+              <th>Comensales</th>
+              <th>Depósito</th>
+              <th>Enlace</th>
             </tr>
           </thead>
           <tbody>
@@ -190,7 +190,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
             {rs.length === 0 ? (
               <tr>
                 <td colSpan={6} className="small">
-                  No reservations yet.
+                  Aún no hay reservas.
                 </td>
               </tr>
             ) : null}
@@ -201,7 +201,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
       {/* ✅ Mobile-friendly cards (CSS shows this only on small screens) */}
       <div className="resCards">
         {rs.length === 0 ? (
-          <div className="small">No reservations yet.</div>
+          <div className="small">Aún no hay reservas.</div>
         ) : (
           rs.map((r: any) => (
             <div key={r.id} className="resCard">

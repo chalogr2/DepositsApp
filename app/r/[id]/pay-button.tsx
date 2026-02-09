@@ -14,7 +14,7 @@ export default function PayButton({ reservationId }: { reservationId: string }) 
         body: JSON.stringify({ reservationId })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? "Failed");
+      if (!res.ok) throw new Error(data?.error ?? "Error");
       window.location.href = data.url;
     } catch (e: any) {
       setErr(e.message ?? "Error"); setLoading(false);
@@ -23,7 +23,7 @@ export default function PayButton({ reservationId }: { reservationId: string }) 
 
   return (
     <div className="hstack">
-      <button className="primary" onClick={pay} disabled={loading}>{loading ? "Redirecting…" : "Pay deposit"}</button>
+      <button className="primary" onClick={pay} disabled={loading}>{loading ? "Redirigiendo…" : "Pagar depósito"}</button>
       {err ? <span className="small" style={{ color: "var(--danger)" }}>{err}</span> : null}
     </div>
   );

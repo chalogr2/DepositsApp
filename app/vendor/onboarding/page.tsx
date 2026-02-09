@@ -18,13 +18,13 @@ export default function VendorOnboardingPage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErr(data?.error ?? "Failed to save");
+        setErr(data?.error ?? "No se pudo guardar");
         return;
       }
 
       window.location.href = "/vendor";
     } catch (e: any) {
-      setErr(e?.message ?? "Request failed");
+      setErr(e?.message ?? "La solicitud falló");
     } finally {
       setSaving(false);
     }
@@ -32,10 +32,10 @@ export default function VendorOnboardingPage() {
 
   return (
     <main className="card">
-      <h1 style={{ marginTop: 0 }}>Set up your restaurant</h1>
-      <p className="small">This is a one-time step. You can rename it later.</p>
+      <h1 style={{ marginTop: 0 }}>Configura tu restaurante</h1>
+      <p className="small">Este paso es único. Podrás cambiar el nombre más adelante.</p>
 
-      <label>Restaurant name</label>
+      <label>Nombre del restaurante</label>
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
@@ -44,9 +44,9 @@ export default function VendorOnboardingPage() {
 
       <div className="hstack" style={{ marginTop: 12 }}>
         <button className="primary" onClick={save} disabled={saving || name.trim().length < 2}>
-          {saving ? "Saving..." : "Continue"}
+          {saving ? "Guardando..." : "Guardar y continuar"}
         </button>
-        <a className="small" href="/vendor">Back</a>
+        <a className="small" href="/vendor">Volver</a>
       </div>
 
       {err ? (
