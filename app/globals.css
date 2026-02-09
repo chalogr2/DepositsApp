@@ -11,14 +11,12 @@
 
 *{box-sizing:border-box}
 
-/* ✅ Always keep a dark background behind everything (prevents white bars on mobile) */
 html{
   height:100%;
   background: var(--bg);
   color-scheme: dark;
 }
 
-/* ✅ Use dynamic viewport height when available (fixes iOS Safari "white gaps") */
 body{
   margin:0;
   min-height:100vh;
@@ -28,10 +26,9 @@ body{
     radial-gradient(1200px 600px at 15% 0%, #0f1a31, var(--bg));
   background-color: var(--bg);
   color:var(--text);
-  overscroll-behavior-y: none; /* reduces overscroll white flash */
+  overscroll-behavior-y:none;
 }
 
-/* ✅ Helps some setups that render into a root container */
 #__next, #root{
   min-height:100vh;
   min-height:100dvh;
@@ -41,7 +38,6 @@ body{
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 
-/* Layout */
 .container{
   max-width:1050px;
   margin:0 auto;
@@ -67,7 +63,6 @@ a:hover{text-decoration:underline}
   .row{grid-template-columns:1fr}
 }
 
-/* Forms */
 label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 input,textarea,select{
   width:100%;
@@ -80,7 +75,6 @@ input,textarea,select{
 }
 textarea{min-height:90px;resize:vertical}
 
-/* Buttons */
 button{
   cursor:pointer;
   padding:10px 14px;
@@ -98,7 +92,6 @@ button.danger{
   border-color:rgba(255,106,106,.35);
 }
 
-/* Badges */
 .badge{
   display:inline-flex;
   align-items:center;
@@ -110,10 +103,7 @@ button.danger{
   color:var(--muted);
 }
 .badge .dot{
-  width:8px;
-  height:8px;
-  border-radius:999px;
-  background:var(--muted);
+  width:8px;height:8px;border-radius:999px;background:var(--muted);
 }
 .badge.ok .dot{background:var(--ok)}
 .badge.bad .dot{background:var(--danger)}
@@ -122,7 +112,6 @@ button.danger{
 .hstack{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .spacer{height:12px}
 
-/* Tables */
 .table{
   width:100%;
   border-collapse:collapse;
@@ -141,16 +130,13 @@ button.danger{
   font-size:13px;
   white-space:nowrap;
 }
-
-/* ✅ Prevent long content from breaking layout */
 .table td{
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width:220px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
 }
 
-/* Code */
 code{
   background:rgba(0,0,0,.25);
   padding:2px 6px;
@@ -161,22 +147,17 @@ code{
 /* =========================
    ✅ Mobile reservations UI
    ========================= */
-
-/* ✅ Wrap tables in a scroll container so they never overflow on small screens */
 .tableWrap{
   overflow-x:auto;
   -webkit-overflow-scrolling:touch;
   border-radius:12px;
   border:1px solid var(--border);
 }
-
-/* Make the table look good inside the scroll wrapper */
 .tableWrap .table{
   margin-top:0;
-  min-width: 720px; /* gives the table room; wrapper handles scroll */
+  min-width:720px;
 }
 
-/* Mobile cards (if you use the card layout) */
 .resCards{display:none;margin-top:12px}
 .resCard{
   background:rgba(18,26,40,.6);
@@ -199,7 +180,159 @@ code{
 }
 
 @media(max-width:720px){
-  /* If you keep the tableWrap + cards approach, hide table on small screens */
   .tableWrap{display:none}
   .resCards{display:block}
+}
+
+/* =========================
+   ✅ Landing page styles
+   ========================= */
+
+.hero{
+  padding:22px 0 8px;
+}
+
+.heroGrid{
+  display:grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap:18px;
+  align-items:start;
+}
+@media(max-width:900px){
+  .heroGrid{grid-template-columns:1fr}
+}
+
+.heroTitle{
+  font-size:40px;
+  letter-spacing:-0.02em;
+  margin:0 0 10px;
+}
+@media(max-width:760px){
+  .heroTitle{font-size:30px}
+}
+
+.heroSub{
+  color:var(--muted);
+  font-size:16px;
+  line-height:1.5;
+  margin:0 0 14px;
+  max-width: 62ch;
+}
+
+.pills{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+  margin:12px 0 0;
+}
+.pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 10px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.04);
+  color:var(--text);
+  font-size:13px;
+}
+
+.ctaRow{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-top:16px;
+}
+
+.secondary{
+  background:rgba(255,255,255,.04);
+}
+
+.section{
+  margin-top:16px;
+}
+
+.screenshotShell{
+  position:relative;
+  border-radius:18px;
+  border:1px solid var(--border);
+  background:rgba(18,26,40,.55);
+  overflow:hidden;
+  box-shadow:0 18px 50px rgba(0,0,0,.45);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:14px;
+}
+
+.screenshot{
+  width:100%;
+  height:auto;
+  display:block;
+  border-radius:14px;
+}
+
+/* ✅ Fade edges overlay */
+.screenshotShell::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    radial-gradient(120% 90% at 50% 40%,
+      rgba(11,15,23,0) 45%,
+      rgba(11,15,23,.65) 82%,
+      rgba(11,15,23,.92) 100%);
+}
+
+/* =========================
+   ✅ Footer (horizontal links, tidy on mobile)
+   ========================= */
+.footer{
+  margin-top:22px;
+  border-top:1px solid var(--border);
+  padding:16px 0 20px;
+}
+
+.footerInner{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.footerBrand{
+  color:var(--muted);
+  font-size:13px;
+  white-space:nowrap;
+}
+
+.footerLinks{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px 14px;
+  align-items:center;
+}
+
+.footerLinks a{
+  color:var(--muted);
+  font-size:13px;
+  text-decoration:none;
+  padding:6px 8px;
+  border-radius:10px;
+  border:1px solid transparent;
+}
+
+.footerLinks a:hover{
+  color:var(--text);
+  border-color: var(--border);
+  text-decoration:none;
+}
+
+@media(max-width:520px){
+  .footerInner{justify-content:center}
+  .footerBrand{order:2}
+  .footerLinks{justify-content:center}
 }

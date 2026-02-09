@@ -1,77 +1,58 @@
-import Image from "next/image";
-
 export default function HomePage() {
   return (
-    <main className="landing">
-      <section className="hero">
+    <div className="container">
+      <main className="card hero">
         <div className="heroGrid">
           <div>
-            <h1 className="heroTitle">Depósitos para reservas en segundos</h1>
-            <p className="heroSubtitle">
-              Crea enlaces de pago para depósitos, reduce no-shows y gestiona todo desde un panel simple.
+            <h1 className="heroTitle">Depósitos para reservas, sin complicaciones</h1>
+            <p className="heroSub">
+              Crea enlaces de pago por reserva en segundos, cobra depósitos con Stripe y gestiona todo desde
+              un panel simple. Ideal para restaurantes en España.
             </p>
 
-            <div className="heroCtas">
+            <div className="pills" aria-label="Características">
+              <span className="pill">✅ Pagos con Stripe</span>
+              <span className="pill">✅ Enlace por reserva</span>
+              <span className="pill">✅ Panel de control</span>
+            </div>
+
+            <div className="ctaRow">
               <a href="/vendor">
-                <button className="primary">Acceder (restaurantes)</button>
+                <button className="primary" type="button">Entrar al portal</button>
               </a>
-              <a href="/contacto">
-                <button>Contactar</button>
+              <a href="/vendor" className="small">
+                <button className="secondary" type="button">Crear cuenta / Acceder</button>
               </a>
             </div>
 
-            <div className="heroBullets small">
-              <div>✅ Pagos con Stripe</div>
-              <div>✅ Enlace por reserva</div>
-              <div>✅ Panel de control</div>
+            <div className="section small">
+              *Los depósitos ayudan a reducir no-shows. El restaurante gestiona sus cobros en Stripe.
             </div>
           </div>
 
-          <div className="shotWrap">
-            <div className="shotFade" />
-            <Image
-              src="/landing/dashboard.png"
-              alt="Ejemplo de panel"
-              width={1200}
-              height={800}
-              className="shotImg"
-              priority
+          <div className="screenshotShell" aria-label="Vista previa del panel">
+            <img
+              className="screenshot"
+              src="/landing-demo.png"
+              alt="Ejemplo del panel del restaurante"
             />
           </div>
         </div>
-      </section>
+      </main>
 
-      <section className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-        <h2 style={{ marginTop: 0 }}>Cómo funciona</h2>
-        <div className="row">
-          <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-            <h3 style={{ marginTop: 0 }}>1) Suscripción</h3>
-            <p className="small">Activa tu cuenta para crear enlaces de depósito.</p>
-          </div>
-          <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-            <h3 style={{ marginTop: 0 }}>2) Conecta Stripe</h3>
-            <p className="small">Recibe pagos con tarjeta y gestiona reembolsos desde Stripe.</p>
-          </div>
-        </div>
-        <div className="spacer" />
-        <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-          <h3 style={{ marginTop: 0 }}>3) Crea enlaces por reserva</h3>
-          <p className="small">
-            Envía un enlace al cliente. Cuando paga, la reserva queda marcada como pagada.
-          </p>
-        </div>
-      </section>
+      {/* Footer */}
+      <footer className="footer">
+        <div className="footerInner">
+          <div className="footerBrand">© {new Date().getFullYear()} Deposits App</div>
 
-      <section className="spacer" />
-      <section className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-        <h2 style={{ marginTop: 0 }}>Transparente y simple</h2>
-        <p className="small">
-          Cancelación desde el portal de Stripe, cambio de método de pago, e historial de reservas.
-        </p>
-        <a href="/vendor">
-          <button className="primary">Empezar</button>
-        </a>
-      </section>
-    </main>
+          <nav className="footerLinks" aria-label="Enlaces legales">
+            <a href="/legal/terminos">Términos</a>
+            <a href="/legal/privacidad">Privacidad</a>
+            <a href="/legal/cookies">Cookies</a>
+            <a href="/legal/aviso-legal">Aviso legal</a>
+          </nav>
+        </div>
+      </footer>
+    </div>
   );
 }
