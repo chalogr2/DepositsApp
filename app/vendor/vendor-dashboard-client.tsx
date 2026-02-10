@@ -49,7 +49,8 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
   const hasAcceptedCurrentLegal =
     Boolean(restaurant.legal_accepted_at) && restaurant.legal_version === LEGAL_VERSION;
 
-  const mustAcceptLegalToSubscribe = !restaurant.stripe_customer_id && !hasAcceptedCurrentLegal;
+  // ✅ CHANGE: require acceptance whenever current legal hasn't been accepted (regardless of stripe_customer_id)
+  const mustAcceptLegalToProceed = !hasAcceptedCurrentLegal;
 
   const gatingMessage = useMemo(() => {
     if (!subActive) return "Suscríbete para desbloquear la creación de enlaces de pago.";
@@ -86,17 +87,17 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
   async function subscribe() {
     setErr(null);
 
-    // ✅ If first time and not accepted, block here (clean UX)
-    if (mustAcceptLegalToSubscribe && !acceptTerms) {
-      return setErr("Debes aceptar los términos antes de suscribirte.");
+    // ✅ Block if must accept and checkbox isn't checked
+    if (mustAcceptLegalToProceed && !acceptTerms) {
+      return setErr("Debes aceptar los términos antes de continuar.");
     }
 
     const res = await fetch("/api/vendor/billing/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        // only send when relevant; server will ignore if already accepted anyway
-        accept_terms: mustAcceptLegalToSubscribe ? true : undefined,
+        // send the actual checkbox value when needed
+        accept_terms: mustAcceptLegalToProceed ? acceptTerms : undefined,
       }),
     });
 
@@ -176,8 +177,8 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
           <h3 style={{ marginTop: 0 }}>1) Suscripción</h3>
           <p className="small">Requerido para crear enlaces de depósito.</p>
 
-          {/* ✅ Only show acceptance box when needed */}
-          {mustAcceptLegalToSubscribe ? (
+          {/* ✅ Show acceptance box whenever legal is not accepted for current version */}
+          {mustAcceptLegalToProceed ? (
             <div className="small" style={{ marginBottom: 10 }}>
               <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <input
@@ -209,7 +210,12 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
             </div>
           ) : null}
 
-          <button className="primary" onClick={subscribe}>
+          <button
+            className="primary"
+            onClick={subscribe}
+            disabled={mustAcceptLegalToProceed && !acceptTerms}
+            title={mustAcceptLegalToProceed && !acceptTerms ? "Debes aceptar los términos" : undefined}
+          >
             Suscribirse / Gestionar facturación
           </button>
         </div>

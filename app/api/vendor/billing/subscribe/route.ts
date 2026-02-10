@@ -13,7 +13,6 @@ export async function POST(req: Request) {
   const user = u?.user;
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  // Read body (optional). Some calls (portal) may send empty body.
   const body = await req.json().catch(() => ({}));
   const acceptTerms = Boolean(body?.accept_terms);
 
@@ -34,21 +33,11 @@ export async function POST(req: Request) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const returnUrl = `${appUrl}/vendor`;
 
-  // ✅ If we already have a Stripe Customer, go to Customer Portal (manage/cancel)
-  // We allow this even if legal acceptance isn't stored, because they're already a customer.
-  if (restaurant.stripe_customer_id) {
-    const portal = await stripe.billingPortal.sessions.create({
-      customer: restaurant.stripe_customer_id,
-      return_url: returnUrl,
-    });
-    return NextResponse.json({ url: portal.url });
-  }
-
   // ✅ Determine whether we already have valid acceptance for current legal version
   const hasAcceptedCurrentLegal =
     Boolean(restaurant.legal_accepted_at) && restaurant.legal_version === LEGAL_VERSION;
 
-  // ✅ For FIRST subscription only: require acceptance if not already accepted
+  // ✅ ALWAYS require explicit acceptance if not already accepted (even if customer exists)
   if (!hasAcceptedCurrentLegal) {
     if (!acceptTerms) {
       return NextResponse.json(
@@ -57,7 +46,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Persist acceptance (only when needed)
     const { error: e2 } = await supabase
       .from("restaurants")
       .update({
@@ -74,18 +62,23 @@ export async function POST(req: Request) {
     }
   }
 
-  // ✅ Create a NEW subscription checkout
+  // ✅ If we already have a Stripe Customer, go to Customer Portal (manage/cancel)
+  if (restaurant.stripe_customer_id) {
+    const portal = await stripe.billingPortal.sessions.create({
+      customer: restaurant.stripe_customer_id,
+      return_url: returnUrl,
+    });
+    return NextResponse.json({ url: portal.url });
+  }
+
+  // ✅ Otherwise, create a NEW subscription checkout
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     line_items: [{ price: process.env.STRIPE_SUB_PRICE_ID!, quantity: 1 }],
     success_url: `${returnUrl}?sub=success`,
     cancel_url: `${returnUrl}?sub=cancel`,
-
-    // Link back to your restaurant row for the webhook
     client_reference_id: restaurant.id,
     metadata: { restaurant_id: restaurant.id },
-
-    // Optional, but can help if you want the customer created with this email:
     customer_email: user.email ?? undefined,
   });
 
