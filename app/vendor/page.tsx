@@ -26,11 +26,29 @@ export default async function VendorPage() {
 
   await supabase.rpc("ensure_restaurant_for_user", { p_owner_user_id: user.id });
 
-  const { data: restaurant, error } = await supabase
+  // ✅ Select only what we need + include legal columns
+  const { data: restaurantRaw, error } = await supabase
     .from("restaurants")
-    .select("*")
+    .select(
+      `
+        id,
+        name,
+        owner_user_id,
+        stripe_account_id,
+        stripe_onboarding_complete,
+        stripe_customer_id,
+        stripe_subscription_id,
+        subscription_status,
+        subscription_current_period_end,
+        legal_accepted_at,
+        legal_version
+      `
+    )
     .eq("owner_user_id", user.id)
     .single();
+
+  // ✅ Cast to any to avoid TS complaining about column types
+  const restaurant: any = restaurantRaw;
 
   if (error || !restaurant) {
     return (
@@ -50,24 +68,20 @@ export default async function VendorPage() {
         apiVersion: "2024-06-20",
       });
 
-      const acct = await stripe.accounts.retrieve(restaurant.stripe_account_id);
+      const acct: any = await stripe.accounts.retrieve(restaurant.stripe_account_id);
 
-      const ready =
-        Boolean((acct as any).details_submitted) && Boolean((acct as any).charges_enabled);
+      const ready = Boolean(acct?.details_submitted) && Boolean(acct?.charges_enabled);
 
-      // Update only if changed (avoid extra writes)
       if (Boolean(restaurant.stripe_onboarding_complete) !== ready) {
         await supabase
           .from("restaurants")
           .update({ stripe_onboarding_complete: ready })
           .eq("id", restaurant.id);
 
-        // Keep local object consistent for this request
         restaurant.stripe_onboarding_complete = ready;
       }
     } catch {
-      // If Stripe call fails, do NOT mark as connected.
-      // Just leave current DB value as-is.
+      // don't change anything if Stripe fails
     }
   }
 

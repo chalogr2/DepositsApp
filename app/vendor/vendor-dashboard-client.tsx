@@ -21,6 +21,8 @@ function statusLabel(s: string) {
   }
 }
 
+const LEGAL_VERSION = "2026-02-10_v1";
+
 export default function VendorDashboardClient({ userEmail, restaurant, reservations }: any) {
   const supabase = supabaseBrowser();
   const [err, setErr] = useState<string | null>(null);
@@ -32,6 +34,9 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
   // simple "copied" feedback per reservation id
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // acceptance checkbox state
+  const [acceptTerms, setAcceptTerms] = useState(false);
+
   const subActive =
     restaurant.subscription_status === "active" &&
     (!restaurant.subscription_current_period_end ||
@@ -40,6 +45,11 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
   // ✅ only true-connect when onboarding is complete
   const connectReady =
     Boolean(restaurant.stripe_account_id) && Boolean(restaurant.stripe_onboarding_complete);
+
+  const hasAcceptedCurrentLegal =
+    Boolean(restaurant.legal_accepted_at) && restaurant.legal_version === LEGAL_VERSION;
+
+  const mustAcceptLegalToSubscribe = !restaurant.stripe_customer_id && !hasAcceptedCurrentLegal;
 
   const gatingMessage = useMemo(() => {
     if (!subActive) return "Suscríbete para desbloquear la creación de enlaces de pago.";
@@ -73,21 +83,29 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     window.location.href = data.deep_link || data.url;
   }
 
-  // ✅ CHANGE: send accept_terms: true in JSON body
   async function subscribe() {
     setErr(null);
+
+    // ✅ If first time and not accepted, block here (clean UX)
+    if (mustAcceptLegalToSubscribe && !acceptTerms) {
+      return setErr("Debes aceptar los términos antes de suscribirte.");
+    }
+
     const res = await fetch("/api/vendor/billing/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accept_terms: true }),
+      body: JSON.stringify({
+        // only send when relevant; server will ignore if already accepted anyway
+        accept_terms: mustAcceptLegalToSubscribe ? true : undefined,
+      }),
     });
+
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setErr(data?.error ?? "No se pudo iniciar la suscripción");
     window.location.href = data.url;
   }
 
   function reservationUrl(id: string) {
-    // absolute URL is nicer for sharing & copying
     if (typeof window === "undefined") return `/r/${id}`;
     return `${window.location.origin}/r/${id}`;
   }
@@ -99,7 +117,6 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(url);
       } else {
-        // fallback
         const ta = document.createElement("textarea");
         ta.value = url;
         ta.style.position = "fixed";
@@ -158,6 +175,40 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
         <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
           <h3 style={{ marginTop: 0 }}>1) Suscripción</h3>
           <p className="small">Requerido para crear enlaces de depósito.</p>
+
+          {/* ✅ Only show acceptance box when needed */}
+          {mustAcceptLegalToSubscribe ? (
+            <div className="small" style={{ marginBottom: 10 }}>
+              <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <input
+                  type="checkbox"
+                  checked={acceptTerms}
+                  onChange={(e) => setAcceptTerms(e.target.checked)}
+                  style={{ width: 18, height: 18, marginTop: 2 }}
+                />
+                <span>
+                  He leído y acepto los{" "}
+                  <a href="/terminos" target="_blank" rel="noreferrer">
+                    Términos y condiciones
+                  </a>
+                  , la{" "}
+                  <a href="/privacidad" target="_blank" rel="noreferrer">
+                    Política de privacidad
+                  </a>
+                  , la{" "}
+                  <a href="/cookies" target="_blank" rel="noreferrer">
+                    Política de cookies
+                  </a>{" "}
+                  y las{" "}
+                  <a href="/suscripcion" target="_blank" rel="noreferrer">
+                    Condiciones de suscripción
+                  </a>
+                  .
+                </span>
+              </label>
+            </div>
+          ) : null}
+
           <button className="primary" onClick={subscribe}>
             Suscribirse / Gestionar facturación
           </button>
@@ -212,7 +263,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
 
       <h3>Reservas recientes</h3>
 
-      {/* ✅ Desktop/tablet table (mobile hides this via CSS) */}
+      {/* ✅ Desktop/tablet table */}
       <div className="tableWrap">
         <table className="table">
           <thead>
@@ -263,7 +314,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
         </table>
       </div>
 
-      {/* ✅ Mobile-friendly cards (CSS shows this only on small screens) */}
+      {/* ✅ Mobile-friendly cards */}
       <div className="resCards">
         {rs.length === 0 ? (
           <div className="small">Aún no hay reservas.</div>

@@ -13,7 +13,7 @@ export async function POST(req: Request) {
   const user = u?.user;
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  // ✅ Read body (optional, but required for first-time subscribe)
+  // Read body (optional). Some calls (portal) may send empty body.
   const body = await req.json().catch(() => ({}));
   const acceptTerms = Boolean(body?.accept_terms);
 
@@ -35,6 +35,7 @@ export async function POST(req: Request) {
   const returnUrl = `${appUrl}/vendor`;
 
   // ✅ If we already have a Stripe Customer, go to Customer Portal (manage/cancel)
+  // We allow this even if legal acceptance isn't stored, because they're already a customer.
   if (restaurant.stripe_customer_id) {
     const portal = await stripe.billingPortal.sessions.create({
       customer: restaurant.stripe_customer_id,
@@ -43,25 +44,34 @@ export async function POST(req: Request) {
     return NextResponse.json({ url: portal.url });
   }
 
-  // ✅ First subscription: require acceptance
-  if (!acceptTerms) {
-    return NextResponse.json(
-      { error: "Debes aceptar los términos antes de suscribirte." },
-      { status: 400 }
-    );
-  }
+  // ✅ Determine whether we already have valid acceptance for current legal version
+  const hasAcceptedCurrentLegal =
+    Boolean(restaurant.legal_accepted_at) && restaurant.legal_version === LEGAL_VERSION;
 
-  // ✅ Persist acceptance (only needed the first time, but safe to write once here)
-  const { error: e2 } = await supabase
-    .from("restaurants")
-    .update({
-      legal_accepted_at: new Date().toISOString(),
-      legal_version: LEGAL_VERSION,
-    })
-    .eq("id", restaurant.id);
+  // ✅ For FIRST subscription only: require acceptance if not already accepted
+  if (!hasAcceptedCurrentLegal) {
+    if (!acceptTerms) {
+      return NextResponse.json(
+        { error: "Debes aceptar los términos antes de suscribirte." },
+        { status: 400 }
+      );
+    }
 
-  if (e2) {
-    return NextResponse.json({ error: "No se pudo guardar la aceptación legal." }, { status: 500 });
+    // Persist acceptance (only when needed)
+    const { error: e2 } = await supabase
+      .from("restaurants")
+      .update({
+        legal_accepted_at: new Date().toISOString(),
+        legal_version: LEGAL_VERSION,
+      })
+      .eq("id", restaurant.id);
+
+    if (e2) {
+      return NextResponse.json(
+        { error: "No se pudo guardar la aceptación legal." },
+        { status: 500 }
+      );
+    }
   }
 
   // ✅ Create a NEW subscription checkout
