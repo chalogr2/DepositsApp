@@ -73,9 +73,14 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     window.location.href = data.deep_link || data.url;
   }
 
+  // ✅ CHANGE: send accept_terms: true in JSON body
   async function subscribe() {
     setErr(null);
-    const res = await fetch("/api/vendor/billing/subscribe", { method: "POST" });
+    const res = await fetch("/api/vendor/billing/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accept_terms: true }),
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setErr(data?.error ?? "No se pudo iniciar la suscripción");
     window.location.href = data.url;

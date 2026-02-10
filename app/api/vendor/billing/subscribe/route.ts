@@ -5,15 +5,21 @@ import { supabaseServer } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function POST() {
+const LEGAL_VERSION = "2026-02-10_v1";
+
+export async function POST(req: Request) {
   const supabase = supabaseServer();
   const { data: u } = await supabase.auth.getUser();
   const user = u?.user;
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
+  // ✅ Read body (optional, but required for first-time subscribe)
+  const body = await req.json().catch(() => ({}));
+  const acceptTerms = Boolean(body?.accept_terms);
+
   const { data: restaurant, error: e1 } = await supabase
     .from("restaurants")
-    .select("id, stripe_customer_id")
+    .select("id, stripe_customer_id, legal_accepted_at, legal_version")
     .eq("owner_user_id", user.id)
     .single();
 
@@ -37,7 +43,28 @@ export async function POST() {
     return NextResponse.json({ url: portal.url });
   }
 
-  // ✅ Otherwise, create a NEW subscription checkout
+  // ✅ First subscription: require acceptance
+  if (!acceptTerms) {
+    return NextResponse.json(
+      { error: "Debes aceptar los términos antes de suscribirte." },
+      { status: 400 }
+    );
+  }
+
+  // ✅ Persist acceptance (only needed the first time, but safe to write once here)
+  const { error: e2 } = await supabase
+    .from("restaurants")
+    .update({
+      legal_accepted_at: new Date().toISOString(),
+      legal_version: LEGAL_VERSION,
+    })
+    .eq("id", restaurant.id);
+
+  if (e2) {
+    return NextResponse.json({ error: "No se pudo guardar la aceptación legal." }, { status: 500 });
+  }
+
+  // ✅ Create a NEW subscription checkout
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     line_items: [{ price: process.env.STRIPE_SUB_PRICE_ID!, quantity: 1 }],
