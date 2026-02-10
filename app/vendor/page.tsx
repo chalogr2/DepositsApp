@@ -27,6 +27,8 @@ export default async function VendorPage() {
   await supabase.rpc("ensure_restaurant_for_user", { p_owner_user_id: user.id });
 
   // ✅ Select only what we need + include legal columns
+  // NOTE: if your DB does not have stripe_account_id / stripe_onboarding_complete yet,
+  // remove them from this select.
   const { data: restaurantRaw, error } = await supabase
     .from("restaurants")
     .select(
@@ -47,7 +49,6 @@ export default async function VendorPage() {
     .eq("owner_user_id", user.id)
     .single();
 
-  // ✅ Cast to any to avoid TS complaining about column types
   const restaurant: any = restaurantRaw;
 
   if (error || !restaurant) {
@@ -61,10 +62,10 @@ export default async function VendorPage() {
     );
   }
 
-  // ✅ Sync Stripe readiness from Stripe (only if we have an account id)
-  if (restaurant.stripe_account_id) {
+  // ✅ Sync Stripe readiness from Stripe (only if we have an account id and a secret key)
+  if (restaurant.stripe_account_id && process.env.STRIPE_PLATFORM_SECRET_KEY) {
     try {
-      const stripe = new Stripe(process.env.STRIPE_PLATFORM_SECRET_KEY!, {
+      const stripe = new Stripe(process.env.STRIPE_PLATFORM_SECRET_KEY, {
         apiVersion: "2024-06-20",
       });
 
@@ -72,16 +73,19 @@ export default async function VendorPage() {
 
       const ready = Boolean(acct?.details_submitted) && Boolean(acct?.charges_enabled);
 
-      if (Boolean(restaurant.stripe_onboarding_complete) !== ready) {
-        await supabase
-          .from("restaurants")
-          .update({ stripe_onboarding_complete: ready })
-          .eq("id", restaurant.id);
+      // Only update if this column exists in your DB (it should) and it changed
+      if (typeof restaurant.stripe_onboarding_complete !== "undefined") {
+        if (Boolean(restaurant.stripe_onboarding_complete) !== ready) {
+          await supabase
+            .from("restaurants")
+            .update({ stripe_onboarding_complete: ready })
+            .eq("id", restaurant.id);
 
-        restaurant.stripe_onboarding_complete = ready;
+          restaurant.stripe_onboarding_complete = ready;
+        }
       }
     } catch {
-      // don't change anything if Stripe fails
+      // If Stripe call fails, do not change anything
     }
   }
 
