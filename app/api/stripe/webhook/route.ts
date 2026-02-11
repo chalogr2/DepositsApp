@@ -3,11 +3,13 @@ import { NextResponse } from "next/server";
 import { stripePlatform } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
+export const runtime = "nodejs"; // ✅ important for Stripe signature verification on Vercel
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function POST(req: Request) {
   const stripe = stripePlatform();
+
   const sig = headers().get("stripe-signature");
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -24,23 +26,23 @@ export async function POST(req: Request) {
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, secret);
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 400 });
+    return NextResponse.json({ error: e?.message ?? "Invalid signature" }, { status: 400 });
   }
 
   const admin = supabaseAdmin();
 
   // Helper: map Stripe subscription -> our normalized status + write to restaurant
   async function applySubscription(sub: any) {
-    const status = (sub.status || "inactive") as string;
-    const end = sub.current_period_end
+    const status = String(sub?.status ?? "inactive");
+    const end = sub?.current_period_end
       ? new Date(sub.current_period_end * 1000).toISOString()
       : null;
 
-    // Preferred mapping is metadata.restaurant_id (if you set it on the subscription)
-    // Fallback: look up restaurant by stripe_subscription_id (when metadata isn't present)
-    let restaurantId: string | null = sub.metadata?.restaurant_id ?? null;
+    // Preferred mapping: metadata.restaurant_id (if present)
+    // Fallback: look up by stripe_subscription_id
+    let restaurantId: string | null = sub?.metadata?.restaurant_id ?? null;
 
-    if (!restaurantId && sub.id) {
+    if (!restaurantId && sub?.id) {
       const { data: row } = await admin
         .from("restaurants")
         .select("id")
@@ -62,30 +64,31 @@ export async function POST(req: Request) {
         ? "canceled"
         : "inactive";
 
-    await admin
+    const { error } = await admin
       .from("restaurants")
       .update({
         subscription_status: normalized,
-        stripe_subscription_id: sub.id,
+        stripe_subscription_id: sub?.id ?? null,
         subscription_current_period_end: end,
       })
       .eq("id", restaurantId);
+
+    if (error) throw new Error(`Supabase update (applySubscription) failed: ${error.message}`);
   }
 
-  // ✅ NEW: when checkout completes, store stripe_customer_id (+ subscription id)
-  // This is required so /api/vendor/billing/subscribe can route to the Customer Portal.
+  // When checkout completes, store stripe_customer_id (+ subscription id), then sync subscription status
   async function applyCheckoutSession(session: any) {
-    if (session.mode !== "subscription") return;
+    if (session?.mode !== "subscription") return;
 
-    const restaurantId =
-      session?.metadata?.restaurant_id || session.client_reference_id;
-    const stripeCustomerId = session.customer as string | null;
-    const stripeSubscriptionId = session.subscription as string | null;
+    const restaurantId: string | null =
+      session?.metadata?.restaurant_id || session?.client_reference_id || null;
 
     if (!restaurantId) return;
 
-    // Save customer/subscription IDs (even if subscription isn't retrieved yet)
-    await admin
+    const stripeCustomerId = (session?.customer as string) || null;
+    const stripeSubscriptionId = (session?.subscription as string) || null;
+
+    const { error } = await admin
       .from("restaurants")
       .update({
         stripe_customer_id: stripeCustomerId,
@@ -93,24 +96,35 @@ export async function POST(req: Request) {
       })
       .eq("id", restaurantId);
 
-    // If we have a subscription ID, retrieve and update status/period end too
+    if (error) throw new Error(`Supabase update (applyCheckoutSession) failed: ${error.message}`);
+
     if (stripeSubscriptionId) {
       const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
       await applySubscription(sub);
     }
   }
 
-  // Handle events
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object as any;
-    await applyCheckoutSession(session);
-  }
+  try {
+    // ✅ checkout completion (subscription purchase)
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as any;
+      await applyCheckoutSession(session);
+    }
 
-  if (
-    event.type === "customer.subscription.updated" ||
-    event.type === "customer.subscription.deleted"
-  ) {
-    await applySubscription(event.data.object);
+    // ✅ keep subscription status in sync (include CREATED as well)
+    if (
+      event.type === "customer.subscription.created" ||
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      await applySubscription(event.data.object);
+    }
+  } catch (e: any) {
+    // Return 500 so Stripe marks delivery failed and retries (good for production reliability)
+    return NextResponse.json(
+      { error: e?.message ?? "Webhook handler failed" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ received: true });
