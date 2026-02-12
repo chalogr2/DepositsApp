@@ -30,13 +30,12 @@ export async function POST() {
   const stripe = stripePlatform();
   const baseUrl = appBaseUrl();
 
-  let acctId = (restaurant.stripe_account_id as string | null) ?? null;
+  let acctId: string | null = restaurant.stripe_account_id ?? null;
 
-  // Create connect account if missing
+  // Create Express Connect account if missing
   if (!acctId) {
     const country = process.env.DEFAULT_VENDOR_COUNTRY || "ES";
 
-    // ✅ Use Express for account_links onboarding
     const acct = await stripe.accounts.create({
       type: "express",
       country,
@@ -52,7 +51,7 @@ export async function POST() {
 
     acctId = acct.id;
 
-    // ✅ Write with admin to avoid RLS issues, but still scope to this owner for safety
+    // Write with admin to avoid RLS issues (still scoped)
     const admin = supabaseAdmin();
     const { error: upErr } = await admin
       .from("restaurants")
@@ -63,12 +62,10 @@ export async function POST() {
       .eq("id", restaurant.id)
       .eq("owner_user_id", user.id);
 
-    if (upErr) {
-      return NextResponse.json({ error: upErr.message }, { status: 500 });
-    }
+    if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
   }
 
-  // Create onboarding link
+  // Always generate a fresh onboarding link
   const link = await stripe.accountLinks.create({
     account: acctId,
     refresh_url: `${baseUrl}/vendor?stripe=refresh`,
