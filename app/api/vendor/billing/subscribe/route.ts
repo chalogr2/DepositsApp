@@ -2,11 +2,10 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { LEGAL_VERSION } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-const LEGAL_VERSION = "2026-02-10_v1";
 
 export async function POST(req: Request) {
   const supabase = supabaseServer();

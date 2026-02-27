@@ -21,13 +21,28 @@ export async function middleware(req: NextRequest) {
     }
   );
 
-  // This triggers Supabase to refresh session cookies when needed
-  await supabase.auth.getUser();
+  // Always refresh the session so cookies stay valid
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // Protect /admin/* — requires a logged-in user whose email is in ADMIN_EMAILS
+  if (req.nextUrl.pathname.startsWith("/admin")) {
+    if (!user) {
+      return NextResponse.redirect(new URL("/vendor/login", req.url));
+    }
+
+    const allowedEmails = (process.env.ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!allowedEmails.includes(user.email?.toLowerCase() ?? "")) {
+      return NextResponse.redirect(new URL("/vendor", req.url));
+    }
+  }
 
   return res;
 }
 
-// Run middleware for these routes (adjust if you want broader coverage)
 export const config = {
   matcher: ["/vendor/:path*", "/admin/:path*", "/api/:path*"],
 };

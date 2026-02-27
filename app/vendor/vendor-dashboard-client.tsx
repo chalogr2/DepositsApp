@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { LEGAL_VERSION } from "@/lib/config";
 
 function formatEUR(cents: number) {
   return `€${(cents / 100).toFixed(2)}`;
@@ -20,8 +21,6 @@ function statusLabel(s: string) {
       return s || "—";
   }
 }
-
-const LEGAL_VERSION = "2026-02-10_v1";
 
 export default function VendorDashboardClient({ userEmail, restaurant, reservations }: any) {
   const supabase = supabaseBrowser();

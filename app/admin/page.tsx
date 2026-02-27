@@ -4,34 +4,14 @@ import { useEffect, useState } from "react";
 type AnyRow = Record<string, any>;
 
 export default function AdminPage() {
-  const [authed, setAuthed] = useState(false);
-  const [password, setContraseña] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-
   const [restaurants, setRestaurantes] = useState<AnyRow[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  async function login() {
-    setErr(null);
-    try {
-      const res = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return setErr(data?.error ?? "Inicio de sesión fallido");
-      setAuthed(true);
-    } catch (e: any) {
-      setErr(e?.message ?? "La solicitud de inicio de sesión falló");
-    }
-  }
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
   async function load() {
     setErr(null);
     setLoading(true);
     try {
-      // cache: "no-store" avoids any caching surprises
       const res = await fetch("/api/admin/overview", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
 
@@ -51,42 +31,9 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    if (authed) load();
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authed]);
-
-  if (!authed) {
-    return (
-      <main className="card">
-        <h1 style={{ marginTop: 0 }}>Admin</h1>
-        <p className="small">
-          Contraseña de demo en <code>.env</code>.
-        </p>
-
-        <div className="row">
-          <div>
-            <label>Contraseña</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setContraseña(e.target.value)}
-            />
-          </div>
-          <div style={{ alignSelf: "end" }}>
-            <button className="primary" onClick={login}>
-              Login
-            </button>
-          </div>
-        </div>
-
-        {err ? (
-          <p className="small" style={{ color: "var(--danger)" }}>
-            {err}
-          </p>
-        ) : null}
-      </main>
-    );
-  }
+  }, []);
 
   return (
     <main className="card">
@@ -134,7 +81,7 @@ export default function AdminPage() {
             </tr>
           ))}
 
-          {(restaurants ?? []).length === 0 ? (
+          {!loading && (restaurants ?? []).length === 0 ? (
             <tr>
               <td colSpan={6} className="small">
                 Aún no hay restaurantes activos.

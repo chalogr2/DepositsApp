@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { LEGAL_VERSION } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -13,11 +14,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => ({}));
-  const legalVersion =
-    typeof body?.legal_version === "string" && body.legal_version.trim()
-      ? body.legal_version.trim()
-      : "2026-02-10"; // ✅ change this when you update legal docs
+  await req.json().catch(() => ({}));
+  const legalVersion = LEGAL_VERSION;
 
   // Find the restaurant owned by this user
   const { data: restaurant, error: e1 } = await supabase
