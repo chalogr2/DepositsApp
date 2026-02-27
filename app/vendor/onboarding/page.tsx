@@ -10,7 +10,7 @@ export default function VendorOnboardingPage() {
     setErr(null);
     setSaving(true);
     try {
-      const res = await fetch("/api/vendor/restaurant/update", {
+      const res = await fetch("/api/vendor/restaurant/name", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name }),
