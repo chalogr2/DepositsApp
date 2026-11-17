@@ -4,6 +4,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { LEGAL_VERSION } from "@/lib/config";
 import { isSubscriptionActive, subscriptionLabel } from "@/lib/subscription";
+import { formatReservationDate } from "@/lib/datetime";
 
 function formatEUR(cents: number) {
   return `€${(cents / 100).toFixed(2)}`;
@@ -63,8 +64,11 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
   }, [subActive, connectReady]);
 
   function formatDateSafe(iso: string) {
+    // Kept the `mounted` guard: Node's and the browser's Intl data can differ
+    // in tiny details (e.g. separators), which would cause a hydration warning.
     if (!mounted) return iso;
-    return new Date(iso).toLocaleString();
+    // Fixed locale + Europe/Madrid instead of the viewer's machine settings
+    return formatReservationDate(iso, "short");
   }
 
   async function logout() {

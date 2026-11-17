@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { stripePlatform, asConnectedAccount } from "@/lib/stripe";
+import { MAX_DEPOSIT_CENTS, MIN_DEPOSIT_CENTS } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -48,13 +49,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Reservation is not payable" }, { status: 409 });
   }
 
-  // ✅ Amount validation + cap
+  // ✅ Amount validation + cap. Same limits as reservation create
+  // (lib/config.ts), so this only fires for rows created before that check.
   const amount = Number(reservation.deposit_cents);
-  if (!Number.isInteger(amount) || amount <= 0) {
+  if (!Number.isInteger(amount) || amount < MIN_DEPOSIT_CENTS) {
     return NextResponse.json({ error: "Invalid deposit amount" }, { status: 409 });
   }
-  const MAX_CENTS = 50000; // €500.00
-  if (amount > MAX_CENTS) {
+  if (amount > MAX_DEPOSIT_CENTS) {
     return NextResponse.json({ error: "Deposit amount too large" }, { status: 409 });
   }
 

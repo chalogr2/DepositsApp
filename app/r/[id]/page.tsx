@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import PayButton from "./pay-button";
+import { formatReservationDate } from "@/lib/datetime";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -89,7 +90,8 @@ export default async function ReservaPage({ params }: { params: { id: string } }
           <div className="small">
             <b>Fecha y hora</b>
           </div>
-          <div className="small">{reservation.datetime_iso}</div>
+          {/* Was the raw UTC string "2026-11-18T19:30:00.000Z"; now Madrid time */}
+          <div className="small">{formatReservationDate(reservation.datetime_iso)}</div>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { LEGAL_VERSION } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
@@ -28,8 +29,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Restaurant not found" }, { status: 404 });
   }
 
-  // Write acceptance
-  const { error: e2 } = await supabase
+  // Write acceptance with the service role (browser role is read-only, see
+  // migration 003). Scoped to the row we just looked up for this user.
+  const { error: e2 } = await supabaseAdmin()
     .from("restaurants")
     .update({
       legal_accepted_at: new Date().toISOString(),

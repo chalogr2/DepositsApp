@@ -28,6 +28,376 @@ This file records **what changed, why, and how we checked it**, so any developer
 
 ---
 
+## 2026-11-17: Critical fixes: data lockdown, payment verification, Connect webhook, deposit limits, timezone, invoice data
+
+**Branch:** `staging`. Previous work pushed first as `4c8dc40`.
+**Scope:** backlog items 1, 2, 3, 4, 5, 7. Item 6 (production setup) is
+intentionally out of scope; it'll be revisited along with a possible move from
+magic links to OAuth.
+
+**⚠️ Requires running `migrations/003_lock_down_client_writes.sql` in the Supabase SQL Editor.**
+The code changes work with or without it (all writes now use the server key),
+but the security hole only closes once it's applied.
+
+---
+
+### Fix 1: The browser could write data it shouldn't
+
+#### Step 1: Prove it, don't assume it
+
+The original audit read `supabase.sql` and concluded "owners can update any
+column of their restaurant". Before changing anything, I tested the **live**
+dev database the way an attacker would: a throwaway user, the public anon key
+and their own session (exactly what any browser has), then each write
+attempted directly against Supabase, skipping our API. The user was deleted
+afterwards.
+
+| Attempt (as owner, from a browser) | Live DB result | What `supabase.sql` would allow |
+|---|---|---|
+| UPDATE `restaurants.name` | allowed | allowed |
+| UPDATE `subscription_status`, `stripe_*`, `legal_*` | **blocked** | allowed |
+| INSERT a restaurant row | **blocked** | allowed |
+| **INSERT a reservation** (status PAID, deposit €0) | **allowed** ❌ | allowed |
+| **UPDATE a reservation** (status → PAID) | **allowed** ❌ | allowed |
+| RPC `ensure_restaurant_for_user(<someone else's id>)` | **allowed** ❌ (created a row for the victim) | allowed |
+
+**Lessons:**
+- *Correction to the audit:* the live DB was already partly hardened by hand
+  (column-level grants), so "fake an active subscription" was **not** possible
+  live. The hand-made changes were never written into the repo, though, so
+  `supabase.sql` would have recreated the hole on a fresh install.
+- The live schema had also drifted: `reservations` had `paid_at` and
+  `stripe_checkout_session_id` columns that the repo doesn't define.
+- **Inserting reservations directly skipped the paywall**: an unpaid restaurant
+  with Stripe connected could create payable deposit links without subscribing.
+
+#### Step 2: Choose a rule simple enough to keep
+
+There were two ways to fix it:
+1. Add fine-grained policies/grants per column and per table. That's easy to get
+   subtly wrong, and every new column needs a new decision.
+2. **"The browser can only READ. Every write goes through a server route."** ✅
+
+Option 2 matches how the app already works: the dashboard only *reads* from the
+browser, and writes go through `/api/...` routes that check auth, ownership,
+subscription and input, and then write with the service-role key. The browser
+write privileges were never needed, only dangerous.
+
+#### Step 3: Migration `003_lock_down_client_writes.sql`
+
+```sql
+alter table public.reservations
+  add column if not exists stripe_checkout_session_id text,
+  add column if not exists paid_at timestamptz;        -- codify the drift
+
+revoke insert, update, delete on public.restaurants  from anon, authenticated;
+revoke insert, update, delete on public.reservations from anon, authenticated;
+revoke all on public.reservation_checkout_sessions   from anon, authenticated;
+
+drop policy if exists "restaurants_insert_own"  on public.restaurants;  -- dead once privileges are gone
+drop policy if exists "restaurants_update_own"  on public.restaurants;
+drop policy if exists "reservations_insert_own" on public.reservations;
+drop policy if exists "reservations_update_own" on public.reservations;
+```
+
+- **RLS vs privileges (a common confusion):** Postgres checks two separate
+  things. *Privileges* (`GRANT`/`REVOKE`) decide whether a role may run INSERT,
+  UPDATE... on a table at all. *RLS policies* decide **which rows** it may
+  touch. We remove the privileges, so the policies about writes become
+  pointless, and we drop them so nobody wonders why they're there.
+- `REVOKE UPDATE ON table` also removes column-level grants, such as the
+  hand-made `grant update (name)` on live.
+- SELECT is untouched, so the dashboard reads and Realtime keep working.
+
+The RPC fix:
+
+```sql
+create or replace function public.ensure_restaurant_for_user(p_owner_user_id uuid)
+returns void language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null or p_owner_user_id is distinct from auth.uid() then
+    raise exception 'not allowed' using errcode = '42501';
+  end if;
+  ...
+```
+
+- `security definer` means the function runs with its **owner's** rights and
+  bypasses RLS. Such a function must validate its own input; this one blindly
+  trusted `p_owner_user_id`.
+- `set search_path = public` is standard hardening for `security definer`
+  functions. It stops a caller from making `restaurants` resolve to an object
+  in another schema.
+- `is distinct from` is like `<>` but also treats `NULL` correctly.
+
+`supabase.sql` (fresh installs) was updated to the same end state.
+
+#### Step 4: Move the remaining browser-session writes to the server key
+
+With the privileges gone, four places that wrote with the *user's* session
+would fail. Each now uses `supabaseAdmin()`, only **after** its checks, and
+scoped to the caller's own row:
+
+| File | Write | Note |
+|---|---|---|
+| `app/api/vendor/restaurant/name/route.ts` | restaurant name | after length validation |
+| `app/api/vendor/legal/accept/route.ts` | legal acceptance | route is currently unused (subscribe handles acceptance) |
+| `app/vendor/page.tsx` | `stripe_onboarding_complete` sync | **this never worked live** (permission denied, silently ignored) |
+| `app/api/vendor/reservations/create/route.ts` | insert reservation | the only way to create one now |
+
+```ts
+// app/vendor/page.tsx
+await supabaseAdmin()
+  .from("restaurants")
+  .update({ stripe_onboarding_complete: ready })   // value comes from Stripe, not the user
+  .eq("id", restaurant.id)
+  .eq("owner_user_id", user.id);
+```
+
+**Why using the service role here isn't a hole:** the service-role key exists
+only on the server. The browser can't use it, so it can only trigger these
+writes through the route, and the route decides what's allowed.
+
+---
+
+### Fix 2: One payment could confirm a different reservation
+
+#### The bug
+`/api/guest/verify?rid=...&sid=...` checked that session `sid` was paid, then
+marked reservation `rid` as PAID. It never checked that **the session was for
+that reservation**. Attack: pay a €1 reservation, then call verify with
+`rid=<a €100 reservation at the same restaurant>`.
+
+#### The fix: one function that derives everything from Stripe
+New `lib/reservation-payments.ts` → `markReservationPaidFromSession(session, connectedAccountId, expectedReservationId?)`.
+This is now the **only** code that sets a reservation to PAID. It never trusts
+the caller's idea of *which* reservation was paid:
+
+```ts
+if (session.mode !== "payment") return fail(409, "Not a deposit payment session");
+if (session.payment_status !== "paid") return fail(409, "Payment not completed");
+
+const reservationId = session.metadata?.reservation_id;           // we set this in /api/guest/checkout
+if (expectedReservationId && expectedReservationId !== reservationId)
+  return fail(409, "Session does not belong to this reservation"); // ← the actual bug fix
+
+if (restaurant.stripe_account_id !== connectedAccountId)           // came from THIS restaurant's account
+  return fail(409, "Session is not from this restaurant's Stripe account");
+
+if (session.amount_total !== reservation.deposit_cents || session.currency !== "eur")
+  return fail(409, "Paid amount does not match the deposit");
+
+// Conditional update: only PENDING -> PAID (safe if two calls race)
+await admin.from("reservations")
+  .update({ status: "PAID", paid_at: ..., stripe_payment_intent_id: ..., stripe_checkout_session_id: session.id })
+  .eq("id", reservation.id)
+  .eq("status", "PENDING");
+```
+
+- **Defense in depth:** the session must match on metadata, Stripe account
+  *and* amount. If one check had a bug, the others would still catch an attack.
+- **Idempotent:** verify and the webhook (fix 3) will often both run for the
+  same payment. The second one sees PAID and returns `alreadyPaid`.
+- **Edge case handled:** if a reservation was CANCELED/EXPIRED but still got
+  paid, it isn't silently flipped. The function returns a 409 that says
+  "needs manual review", because that money needs a refund decision.
+
+`app/api/guest/verify/route.ts` now just retrieves the session **on the
+restaurant's connected account** and calls this function with `rid` as the
+expected id.
+
+#### Verified live (dev server, real test data)
+| Request | Response |
+|---|---|
+| session paid for reservation A, `rid` = reservation B | `409 {"error":"Session does not belong to this reservation"}` ✅ |
+| same session, `rid` = A (legit, already PAID) | `200 {"ok":true}` ✅ (idempotent) |
+| made-up `sid` | `404 {"error":"Payment session not found"}` ✅ |
+
+---
+
+### Fix 3: Reservations stayed PENDING if the guest closed the tab
+
+#### The bug
+The only thing that marked a reservation PAID was the guest's browser loading
+`/success`. Close the tab, lose the connection, or have a slow phone, and the
+restaurant never saw the deposit, even though the money was in their Stripe account.
+
+#### The fix: a webhook for connected-account events
+New `app/api/stripe/connect-webhook/route.ts`.
+
+- **Why a separate endpoint?** Stripe sends two different kinds of events:
+  *platform* events (our own account: subscriptions → `/api/stripe/webhook`)
+  and *Connect* events (things that happen on a restaurant's account, such as a
+  guest paying a deposit). In production they're two endpoints with two
+  signing secrets. Keeping them in separate files keeps each one simple.
+- Flow:
+  1. Verify the signature over the **raw** body (`req.text()`). If the body
+     were parsed and re-serialized, the bytes would differ and the signature
+     check would fail.
+  2. Only handle `checkout.session.completed` and
+     `checkout.session.async_payment_succeeded`, and only when
+     `event.account` is set. That field tells us *which* restaurant account the
+     event came from.
+  3. Skip sessions that aren't `payment_status: "paid"` yet. Delayed methods
+     like SEPA complete as "unpaid" and send `async_payment_succeeded` later.
+  4. Call the same `markReservationPaidFromSession(session, event.account)`.
+- **Choosing the HTTP response:** Stripe retries on non-2xx.
+  - A *business* rejection (amount mismatch...) won't fix itself on retry, so
+    the handler returns **200** and logs a warning.
+  - An *infrastructure* error (DB down) might fix itself, so it returns
+    **500** and Stripe retries later.
+- `STRIPE_CONNECT_WEBHOOK_SECRET` falls back to `STRIPE_WEBHOOK_SECRET`,
+  because the local Stripe CLI signs both streams with the same secret.
+
+**New local command:**
+```powershell
+stripe listen --forward-to localhost:3000/api/stripe/webhook --forward-connect-to localhost:3000/api/stripe/connect-webhook
+```
+
+Together with the live dashboard (Realtime), the restaurant now sees PAID
+within seconds of payment, whatever the guest does.
+
+---
+
+### Fix 4: Links with a deposit nobody could pay
+
+#### The bug
+Reservation create accepted `depositCents >= 0` with no maximum, while guest
+checkout rejected `<= 0` and `> €500`. Two places had two different rules, and the
+mismatch produced links that errored when the guest tried to pay.
+
+#### The fix: one set of limits used everywhere
+```ts
+// lib/config.ts
+export const MIN_DEPOSIT_CENTS = 50;      // €0.50: Stripe's minimum charge for EUR
+export const MAX_DEPOSIT_CENTS = 50_000;  // €500: product cap (abuse/fraud)
+```
+- **API** (`reservations/create`): zod `.min(MIN).max(MAX)` with Spanish messages.
+  The route now returns the first readable message instead of zod's raw JSON dump.
+- **Checkout** (`guest/checkout`): uses the same constants instead of its own `50000`.
+- **Form**: `min`/`max` on the input plus a hint ("Entre €0.50 y €500.00").
+  That's only for convenience; the API is what enforces it.
+
+While validating inputs in that schema, I also added: the date must parse and
+must not be in the past (5-minute grace), party size ≤ 100, name ≤ 120
+characters, policy text ≤ 2000 characters. All of these used to be unbounded.
+
+---
+
+### Fix 5: Wrong times (timezone)
+
+#### The bugs
+1. **Form default:** `new Date(...).toISOString().slice(0, 16)` gives **UTC**
+   wall-clock time, but `<input type="datetime-local">` shows it as **local**
+   time. In Spain the default appeared 1 hour early (2 in summer). It was also
+   computed during server rendering (UTC server), which caused a React
+   hydration mismatch.
+2. **Guest page:** printed the stored string as-is: `2026-11-18T19:30:00.000Z`.
+3. **Dashboard:** `toLocaleString()` uses whatever locale and timezone the
+   viewer's machine has.
+
+#### The fix: store UTC, display Madrid time
+- Storage is unchanged: UTC ISO strings, which is correct.
+- New `lib/datetime.ts`:
+  - `formatReservationDate(iso, "long" | "short")` uses
+    `Intl.DateTimeFormat("es-ES", { timeZone: APP_TIMEZONE, ... })`. Fixed locale
+    + fixed timezone gives the same text on the server and in every browser.
+    Example: `2026-11-18T19:30:00Z` → **"miércoles, 18 de noviembre de 2026, 20:30"**.
+    Daylight saving is handled by Intl (July → 21:30).
+  - `toDatetimeLocalValue(date)` builds `YYYY-MM-DDTHH:mm` from **local** getters.
+- The form computes its default in `useEffect` (browser only) and guards
+  against an empty value: `new Date("").toISOString()` throws.
+- `APP_TIMEZONE = "Europe/Madrid"` in `lib/config.ts`. **Known limitation:** the
+  Canary Islands are one hour behind (`Atlantic/Canary`). If needed, the next
+  step is a per-restaurant `timezone` column.
+
+---
+
+### Fix 7: Invoice data for Spanish B2B invoicing
+
+#### Decision (by the project owner)
+Asked how IVA should apply to the €20/month price (`+ IVA` / `IVA incluido` /
+skip). **Decision: skip the IVA line for now; only collect the restaurant's
+fiscal data.** So no tax rate was created in Stripe.
+
+#### The change (`subscribe/route.ts`, Checkout params)
+```ts
+billing_address_collection: "required",
+tax_id_collection: { enabled: true },                     // NIF/CIF field in Checkout
+...(customerId ? { customer_update: { name: "auto", address: "auto" } } : {}),
+```
+Stripe then prints the legal name, address and tax ID on every subscription invoice.
+
+**Verified with Stripe (test mode):** I created a Checkout session with these exact
+params for both branches and expired it immediately:
+
+| Branch | Result |
+|---|---|
+| new customer | accepted ✅ |
+| existing customer + `customer_update` | accepted ✅ |
+| existing customer **without** `customer_update` | **rejected**: "Tax ID collection requires updating business name on the customer" |
+
+The third row is why `customer_update` is needed. It also shows the value of
+asking Stripe directly instead of trusting the docs from memory.
+
+**Still to decide later:** IVA (21% via a Stripe tax rate or Stripe Tax).
+Canary Islands (IGIC, no IVA) is the reason Stripe Tax would be the more robust option.
+
+---
+
+### Verification summary
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | ✅ |
+| `npm run lint` | ✅ no new warnings |
+| Live attack test on DB permissions (before migration 003) | reproduced the 3 holes above |
+| Live verify-route tests (fix 2) | ✅ all three cases |
+| Stripe accepts the new Checkout params (fix 7) | ✅ |
+| Madrid formatting, winter and summer (fix 5) | ✅ 20:30 / 21:30 for 19:30Z |
+| **After running migration 003:** re-run the attack test | ✅ every write blocked (details below) |
+
+**Attack test after migration 003.** Same scripts, a throwaway user deleted afterwards:
+
+| Attempt with the public key + own login | Result |
+|---|---|
+| A1: set own `subscription_status='active'` and fake Stripe ids | blocked (row unchanged) |
+| A2: insert a reservation directly (PAID, €0) | `permission denied for table reservations` |
+| A3: insert a second restaurant row | `permission denied for table restaurants` |
+| A4: call `ensure_restaurant_for_user` with another user's id | `not allowed` (our new 42501 check) |
+| UPDATE any restaurants column (name, status, stripe ids, legal) | `permission denied` |
+| UPDATE / DELETE a reservation (e.g. status=PAID) | `permission denied` |
+| SELECT `reservation_checkout_sessions` (owner and anon) | `permission denied` |
+| **Still allowed:** read own restaurant and own reservations | ✅ ok (the dashboard and Realtime need these) |
+
+After the migration the tester reported the app still works normally. That
+matters: with direct writes now refused, anything that still saves data must
+be going through the server routes.
+
+**"I don't see the billing address / NIF fields" (false alarm, explained).**
+Stripe's list of Checkout sessions showed that the only sessions created with the
+new parameters were my two test sessions. The tester's account already had a
+**live** subscription, so "Suscribirse/Gestionar" correctly opened the
+**Billing Portal**, not Checkout. The new fields only exist in Checkout.
+Two more things to know when testing:
+- Stripe shows the NIF field behind a checkbox ("Estoy comprando como empresa").
+  It is optional (`required: "never"`), so it only appears once ticked.
+- The Portal is configured to cancel **at period end**, so cancelling there
+  does not free the account for a new Checkout until the period ends. To test,
+  use a fresh account, or cancel the subscription *immediately* from the Stripe
+  test Dashboard.
+
+**Manual tests for you:**
+1. Run migration 003. Then rename the restaurant (`/vendor/profile`): it should still work, now through the server key.
+2. Create a reservation with a €0 or €600 deposit: you should get a clear error. Try €10: the link is created.
+3. Open the guest link: the date should read like "miércoles, 18 de noviembre de 2026, 20:30".
+4. Restart `stripe listen` with `--forward-connect-to` (command above). Pay a deposit and **close the tab on Stripe's success page before `/success` loads**: the dashboard should still turn PAGADO.
+5. Subscribe with a fresh account (or one with **no** live subscription): Checkout asks for the billing address, and ticking "Estoy comprando como empresa" shows the NIF/CIF field.
+
+---
+
 ## 2026-11-17: Feature: reservations table updates live when a guest pays
 
 **Branch:** `staging` (uncommitted at time of writing)
@@ -137,13 +507,13 @@ Priority: 🔴 must fix before real users · 🟠 needed for a usable MVP · �
 
 | # | Pri | Item | Where |
 |---|---|---|---|
-| 1 | 🔴 | RLS lets owners write any column of their own `restaurants` row (fake `active` subscription, swap Stripe ids). | `supabase.sql` |
-| 2 | 🔴 | `/api/guest/verify` doesn't check the session belongs to the reservation (one €1 payment can mark another reservation PAID). | `app/api/guest/verify/route.ts` |
-| 3 | 🔴 | No Connect webhook for guest payments: if the guest closes the tab before `/success`, the reservation stays PENDING forever. | new webhook endpoint |
-| 4 | 🔴 | Reservation create allows a €0 deposit or more than €500, but checkout rejects both, so the restaurant gets a link the guest can't pay. | `reservations/create/route.ts` |
-| 5 | 🔴 | Timezone: the form's default time is computed in UTC (1 h off in Spain), and the guest page prints the raw ISO string (`2026-11-18T19:30:00.000Z`). | `new-reservation-client.tsx`, `app/r/[id]/page.tsx` |
-| 6 | 🔴 | Production setup: custom SMTP for Supabase Auth (the default allows only a few emails/hour, so real signups would fail), live Stripe keys, live webhook endpoint, Connect platform profile, Supabase prod redirect URLs, Vercel env vars. | config |
-| 7 | 🔴 | Spanish invoicing: subscription invoices need IVA and the customer's NIF/CIF (Stripe Tax or tax rates, `tax_id_collection` in Checkout). | `subscribe/route.ts`, Stripe settings |
+| 1 | ✅ | ~~Browser could write data it shouldn't (insert/update reservations, RPC for other users).~~ Fixed: migration 003 + server-side writes. | `supabase.sql`, migration 003 |
+| 2 | ✅ | ~~`/api/guest/verify` didn't check the session belongs to the reservation.~~ Fixed: `lib/reservation-payments.ts`. | `app/api/guest/verify/route.ts` |
+| 3 | ✅ | ~~No Connect webhook for guest payments.~~ Fixed: `/api/stripe/connect-webhook`. | new webhook endpoint |
+| 4 | ✅ | ~~Unpayable deposits (€0 / > €500) could be created.~~ Fixed: shared limits in `lib/config.ts`. | `reservations/create/route.ts` |
+| 5 | ✅ | ~~Timezone bugs.~~ Fixed: `lib/datetime.ts` (store UTC, show Europe/Madrid). Canary Islands still not handled. | form, guest page, dashboard |
+| 6 | ⏸️ | Production setup: custom SMTP (or OAuth instead of magic links), live keys, live webhook endpoints (platform **and** Connect), Connect platform profile, prod redirect URLs, Vercel env vars. *Deferred by decision.* | config |
+| 7 | 🟡 | Invoicing: NIF/CIF + billing address now collected ✅. **IVA line deliberately skipped for now** (owner decision). | `subscribe/route.ts`, Stripe settings |
 | 8 | 🟠 | No way to cancel a reservation / refund / mark no-show. `CANCELED` and `EXPIRED` statuses exist but nothing sets them; links stay payable after the reservation date. | dashboard + new API |
 | 9 | 🟠 | No email notifications (Resend is configured in `.env` but unused): "deposit received" to the restaurant, confirmation to the guest. | new |
 | 10 | 🟠 | Create-reservation UX: prefilled "Juan Pérez", `alert()` popup for the link. It should show the link with copy/WhatsApp buttons. | `new-reservation-client.tsx` |

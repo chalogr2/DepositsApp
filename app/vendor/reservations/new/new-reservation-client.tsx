@@ -1,9 +1,18 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toDatetimeLocalValue } from "@/lib/datetime";
+import { MAX_DEPOSIT_CENTS, MIN_DEPOSIT_CENTS } from "@/lib/config";
 
 export default function NewReservationClient({ restaurantId, blocked }: { restaurantId: string; blocked: boolean }) {
   const [customerName, setCustomerName] = useState("Juan Pérez");
-  const [datetimeISO, setDatetimeISO] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 16));
+  // Default "tomorrow, same time" in the BROWSER's local time. Computed after
+  // mount: during server rendering the clock/timezone is the server's (UTC),
+  // which caused both the 1 h offset and a hydration mismatch.
+  // (Old code: new Date(...).toISOString().slice(0, 16), which is UTC wall-clock time.)
+  const [datetimeISO, setDatetimeISO] = useState("");
+  useEffect(() => {
+    setDatetimeISO((cur) => cur || toDatetimeLocalValue(new Date(Date.now() + 86400000)));
+  }, []);
   const [partySize, setPartySize] = useState(2);
   const [depositEUR, setDepositEUR] = useState(10);
   const [policyText, setPolicyText] = useState(
@@ -15,6 +24,10 @@ El depósito se aplicará a la cuenta final cuando asistas.`
 
   async function create() {
     setErr(null);
+    // new Date("").toISOString() throws a RangeError, so validate first
+    if (!datetimeISO || Number.isNaN(new Date(datetimeISO).getTime())) {
+      return setErr("Introduce una fecha y hora válidas.");
+    }
     const res = await fetch("/api/vendor/reservations/create", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -49,7 +62,9 @@ El depósito se aplicará a la cuenta final cuando asistas.`
       </div>
       <div className="row" style={{ marginTop: 12 }}>
         <div><label>Comensales</label><input type="number" min={1} value={partySize} onChange={e => setPartySize(parseInt(e.target.value || "1", 10))} /></div>
-        <div><label>Depósito (EUR)</label><input type="number" min={0} step={1} value={depositEUR} onChange={e => setDepositEUR(parseFloat(e.target.value || "0"))} /></div>
+        <div><label>Depósito (EUR)</label><input type="number" min={MIN_DEPOSIT_CENTS / 100} max={MAX_DEPOSIT_CENTS / 100} step={0.5} value={depositEUR} onChange={e => setDepositEUR(parseFloat(e.target.value || "0"))} />
+          {/* Hint only; the API enforces the same limits (lib/config.ts) */}
+          <div className="small">Entre €{(MIN_DEPOSIT_CENTS / 100).toFixed(2)} y €{(MAX_DEPOSIT_CENTS / 100).toFixed(2)}</div></div>
       </div>
       <div style={{ marginTop: 12 }}>
         <label>Texto de la política</label>

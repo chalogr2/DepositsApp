@@ -3,6 +3,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import VendorDashboardClient from "./vendor-dashboard-client";
 import Stripe from "stripe";
 import { stripePlatform } from "@/lib/stripe";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { syncRestaurantSubscription } from "@/lib/billing-sync";
 
 export const dynamic = "force-dynamic";
@@ -93,10 +94,14 @@ export default async function VendorPage({
       // Only update if this column exists in your DB (it should) and it changed
       if (typeof restaurant.stripe_onboarding_complete !== "undefined") {
         if (Boolean(restaurant.stripe_onboarding_complete) !== ready) {
-          await supabase
+          // Service role: the user's own session cannot write this column
+          // (it never could on the live DB, so this sync silently did nothing
+          // before). The value comes from Stripe, not from the user.
+          await supabaseAdmin()
             .from("restaurants")
             .update({ stripe_onboarding_complete: ready })
-            .eq("id", restaurant.id);
+            .eq("id", restaurant.id)
+            .eq("owner_user_id", user.id);
 
           restaurant.stripe_onboarding_complete = ready;
         }

@@ -126,6 +126,15 @@ export async function POST(req: Request) {
       // Put restaurant_id on the SUBSCRIPTION too, so customer.subscription.*
       // webhooks can map straight to the restaurant without a DB lookup.
       subscription_data: { metadata: { restaurant_id: restaurant.id } },
+      // Spanish invoicing (B2B): the invoice must show the restaurant's legal
+      // name, address and NIF/CIF. Checkout collects them and Stripe prints
+      // them on every subscription invoice. (No IVA line is added yet; that's a
+      // pending business decision, see DEVLOG.)
+      billing_address_collection: "required",
+      tax_id_collection: { enabled: true },
+      // Stripe requires this when collecting tax ids for an EXISTING customer:
+      // it allows Checkout to save the entered name/address on that customer.
+      ...(customerId ? { customer_update: { name: "auto", address: "auto" } } : {}),
       // Reuse the existing customer (keeps invoice history in one place);
       // Stripe only accepts one of `customer` / `customer_email`.
       ...(customerId

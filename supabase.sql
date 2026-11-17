@@ -34,6 +34,8 @@ create table if not exists public.reservations (
   status text not null default 'PENDING',
 
   stripe_payment_intent_id text,
+  stripe_checkout_session_id text,
+  paid_at timestamptz,
 
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -63,44 +65,39 @@ drop policy if exists "restaurants_select_own" on public.restaurants;
 create policy "restaurants_select_own" on public.restaurants
 for select using (auth.uid() = owner_user_id);
 
-drop policy if exists "restaurants_insert_own" on public.restaurants;
-create policy "restaurants_insert_own" on public.restaurants
-for insert with check (auth.uid() = owner_user_id);
-
-drop policy if exists "restaurants_update_own" on public.restaurants;
-create policy "restaurants_update_own" on public.restaurants
-for update using (auth.uid() = owner_user_id)
-with check (auth.uid() = owner_user_id);
-
 drop policy if exists "reservations_select_own" on public.reservations;
 create policy "reservations_select_own" on public.reservations
 for select using (
   exists (select 1 from public.restaurants r where r.id = reservations.restaurant_id and r.owner_user_id = auth.uid())
 );
 
-drop policy if exists "reservations_insert_own" on public.reservations;
-create policy "reservations_insert_own" on public.reservations
-for insert with check (
-  exists (select 1 from public.restaurants r where r.id = reservations.restaurant_id and r.owner_user_id = auth.uid())
-);
+-- SECURITY MODEL: the browser (anon / authenticated) may only READ its own rows
+-- (policies above). There are deliberately NO insert/update/delete policies and
+-- no write privileges: every write goes through a server route that checks
+-- auth, ownership, subscription and input, then writes with the service role.
+-- See migrations/003_lock_down_client_writes.sql and DEVLOG.md.
+revoke insert, update, delete on public.restaurants  from anon, authenticated;
+revoke insert, update, delete on public.reservations from anon, authenticated;
 
-drop policy if exists "reservations_update_own" on public.reservations;
-create policy "reservations_update_own" on public.reservations
-for update using (
-  exists (select 1 from public.restaurants r where r.id = reservations.restaurant_id and r.owner_user_id = auth.uid())
-)
-with check (
-  exists (select 1 from public.restaurants r where r.id = reservations.restaurant_id and r.owner_user_id = auth.uid())
-);
-
+-- security definer = runs with the owner's rights, so it validates the caller
+-- itself and pins search_path.
 create or replace function public.ensure_restaurant_for_user(p_owner_user_id uuid)
-returns void language plpgsql security definer as $$
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
+  if auth.uid() is null or p_owner_user_id is distinct from auth.uid() then
+    raise exception 'not allowed' using errcode = '42501';
+  end if;
+
   if not exists (select 1 from public.restaurants where owner_user_id = p_owner_user_id) then
     insert into public.restaurants(owner_user_id, name) values (p_owner_user_id, 'My Restaurant');
   end if;
 end; $$;
 
+revoke all on function public.ensure_restaurant_for_user(uuid) from public, anon;
 grant execute on function public.ensure_restaurant_for_user(uuid) to authenticated;
 
 -- Tracks active Stripe checkout sessions per reservation.
@@ -129,6 +126,7 @@ for each row execute function public.set_updated_at();
 
 -- RLS enabled; no policies for regular users since this table is service-role only.
 alter table public.reservation_checkout_sessions enable row level security;
+revoke all on public.reservation_checkout_sessions from anon, authenticated;
 
 -- Realtime: stream reservation changes to the vendor dashboard (RLS still applies).
 -- Same as migrations/002_realtime_reservations.sql.
