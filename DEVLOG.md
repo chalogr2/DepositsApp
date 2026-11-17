@@ -28,6 +28,25 @@ This file records **what changed, why, and how we checked it**, so any developer
 
 ---
 
+## 2026-11-18: Publishing: license, README in the owner's voice, repo tidy-up
+
+Preparing `staging` to be merged into `main` and the repository to be made public.
+
+| Change | Why |
+|---|---|
+| `LICENSE`: all rights reserved | Owner decision. The code is public for portfolio reading, not reuse. Without a license file the default is the same, but saying it explicitly avoids doubt. |
+| README rewritten in the first person, in a plainer voice | Owner request: it should read like the author wrote it. Same facts as before; one screenshot table instead of the 2×2 grid; the architecture flowchart was dropped (the sequence diagram covers it). No long dashes. |
+| Landing image (`public/landing-demo.png`) replaced with the current dashboard screenshot | The old one showed the UI from before the actions column. |
+| Deleted `public/landing/landing-demo.png` | An identical, unused copy. |
+| Footer shows "Deposit Links" instead of `TU_NOMBRE_COMERCIAL` | Template placeholder visible on every page. The legal pages keep their placeholders, since they need a real legal entity that a portfolio project doesn't have. |
+| CI: `actions/checkout@v5`, `actions/setup-node@v5`, Node 22 | The first CI run warned that the v4 actions use the deprecated Node 20 runtime. |
+| Repo description and topics set on GitHub | So the repository page says what it is. |
+
+**History:** the merge into `main` uses a merge commit, not a squash, so the full
+commit history stays visible.
+
+---
+
 ## 2026-11-18: Automated tests, CI, portfolio README (backlog 14, 13)
 
 **Branch:** `staging`. The previous work was pushed as `bd99e9b`.

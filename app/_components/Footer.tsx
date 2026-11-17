@@ -31,7 +31,7 @@ export default function Footer() {
         </div>
 
         <div className="footerBottom small">
-          © {new Date().getFullYear()} <span className="muted">TU_NOMBRE_COMERCIAL</span> Todos los derechos reservados.
+          © {new Date().getFullYear()} <span className="muted">Deposit Links</span> Todos los derechos reservados.
         </div>
       </div>
     </footer>
