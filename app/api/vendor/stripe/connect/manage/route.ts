@@ -1,20 +1,28 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { stripePlatform } from "@/lib/stripe";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function POST() {
   const supabase = supabaseServer();
 
-  const { data: u } = await supabase.auth.getUser();
-  const user = u?.user;
+  const {
+    data: { user },
+    error: uErr,
+  } = await supabase.auth.getUser();
+
+  if (uErr) return NextResponse.json({ error: uErr.message }, { status: 401 });
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data: restaurant, error: e1 } = await supabase
+  const { data: restaurant, error: rErr } = await supabase
     .from("restaurants")
     .select("stripe_account_id")
     .eq("owner_user_id", user.id)
     .single();
 
-  if (e1 || !restaurant) {
+  if (rErr || !restaurant) {
     return NextResponse.json({ error: "Restaurant not found" }, { status: 404 });
   }
 
@@ -22,12 +30,10 @@ export async function POST() {
     return NextResponse.json({ error: "Stripe not connected yet" }, { status: 400 });
   }
 
-  const acct = restaurant.stripe_account_id;
+  const stripe = stripePlatform();
 
-  // Standard accounts: you cannot generate a login link. Send them to Stripe Dashboard.
-  return NextResponse.json({
-    url: "https://dashboard.stripe.com/",
-    deep_link: `https://dashboard.stripe.com/${acct}`,
-    stripe_account_id: acct,
-  });
+  // Express accounts: generate an Express Dashboard login link
+  const login = await stripe.accounts.createLoginLink(restaurant.stripe_account_id);
+
+  return NextResponse.json({ url: login.url });
 }

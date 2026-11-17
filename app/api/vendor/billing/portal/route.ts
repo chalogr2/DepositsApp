@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase/server";
+import { stripePlatform, appBaseUrl } from "@/lib/stripe";
 
 export async function POST() {
   const supabase = supabaseServer();
@@ -19,12 +19,13 @@ export async function POST() {
     return NextResponse.json({ error: "No Stripe customer yet. Subscribe first." }, { status: 400 });
   }
 
-  const stripe = new Stripe(process.env.STRIPE_PLATFORM_SECRET_KEY!, { apiVersion: "2024-06-20" });
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const stripe = stripePlatform();
 
+  // appBaseUrl() falls back to APP_BASE_URL / VERCEL_URL, so production never
+  // returns users to http://localhost:3000.
   const session = await stripe.billingPortal.sessions.create({
     customer: restaurant.stripe_customer_id,
-    return_url: `${appUrl}/vendor`,
+    return_url: `${appBaseUrl()}/vendor`,
   });
 
   return NextResponse.json({ url: session.url });

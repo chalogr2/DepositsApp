@@ -1,37 +1,119 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { LEGAL_VERSION } from "@/lib/config";
+import { isSubscriptionActive, subscriptionLabel } from "@/lib/subscription";
+import { formatReservationDate } from "@/lib/datetime";
+import {
+  ACTION_LABEL,
+  allowedActions,
+  effectiveStatus,
+  isPositiveStatus,
+  statusLabel,
+  type ReservationAction,
+} from "@/lib/reservation-status";
 
 function formatEUR(cents: number) {
   return `€${(cents / 100).toFixed(2)}`;
 }
 
+/**
+ * Buttons for the actions allowed on one reservation (lib/reservation-status.ts).
+ * "Cancelar" on a PAID reservation moves money, so it asks for a second click
+ * ("¿Reembolsar €X?") inline, instead of a browser confirm() popup.
+ */
+function RowActions({ r, busy, onAction }: { r: any; busy: boolean; onAction: (r: any, a: ReservationAction) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const actions = allowedActions(r);
+  if (!actions.length) return null;
+
+  const isPaid = effectiveStatus(r) !== "PENDING";
+
+  if (confirming) {
+    return (
+      <div className="hstack" style={{ gap: 6, flexWrap: "nowrap" }}>
+        <span className="small">{isPaid ? `¿Reembolsar ${formatEUR(r.deposit_cents)}?` : "¿Cancelar el enlace?"}</span>
+        <button type="button" className="danger" disabled={busy} onClick={() => { setConfirming(false); onAction(r, "cancel"); }} style={{ padding: "6px 10px" }}>
+          Sí
+        </button>
+        <button type="button" disabled={busy} onClick={() => setConfirming(false)} style={{ padding: "6px 10px" }}>
+          No
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="hstack" style={{ gap: 6, flexWrap: "wrap" }}>
+      {actions.map((a) => (
+        <button
+          key={a}
+          type="button"
+          disabled={busy}
+          onClick={() => (a === "cancel" ? setConfirming(true) : onAction(r, a))}
+          style={{ padding: "6px 10px" }}
+        >
+          {a === "cancel" && isPaid ? "Cancelar y reembolsar" : ACTION_LABEL[a]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function VendorDashboardClient({ userEmail, restaurant, reservations }: any) {
-  const supabase = supabaseBrowser();
+  // Stable reference (createBrowserClient is a singleton anyway, but this makes
+  // it explicit so the realtime effect below doesn't re-run every render)
+  const supabase = useMemo(() => supabaseBrowser(), []);
   const [err, setErr] = useState<string | null>(null);
 
   // hydration-safe date formatting
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const subActive =
-    restaurant.subscription_status === "active" &&
-    (!restaurant.subscription_current_period_end ||
-      new Date(restaurant.subscription_current_period_end) > new Date());
+  // Re-render once a minute: statuses and allowed actions depend on the clock
+  // (PENDING -> EXPIRADA, "No presentado" appears once the time has passed),
+  // and nothing else would trigger a render on a dashboard left open.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setTick((x) => x + 1), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  // simple "copied" feedback per reservation id
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // acceptance checkbox state
+  const [acceptTerms, setAcceptTerms] = useState(false);
+
+  // Shared with the reservations API so UI and server always agree
+  const subActive = isSubscriptionActive(restaurant);
+  // Badge text derived from the same logic (shows "caducada" when the DB says
+  // "active" but the paid period is over, instead of a red "active")
+  const subLabel = subscriptionLabel(restaurant);
 
   // ✅ only true-connect when onboarding is complete
   const connectReady =
     Boolean(restaurant.stripe_account_id) && Boolean(restaurant.stripe_onboarding_complete);
 
+  const hasAcceptedCurrentLegal =
+    Boolean(restaurant.legal_accepted_at) && restaurant.legal_version === LEGAL_VERSION;
+
+  // ✅ CHANGE: require acceptance whenever current legal hasn't been accepted (regardless of stripe_customer_id)
+  const mustAcceptLegalToProceed = !hasAcceptedCurrentLegal;
+
   const gatingMessage = useMemo(() => {
-    if (!subActive) return "Subscribe to unlock creating payment links.";
-    if (!connectReady) return "Connect Stripe to accept card payments.";
+    if (!subActive) return "Suscríbete para desbloquear la creación de enlaces de pago.";
+    if (!connectReady) return "Conecta Stripe para aceptar pagos con tarjeta.";
     return null;
   }, [subActive, connectReady]);
 
   function formatDateSafe(iso: string) {
+    // Kept the `mounted` guard: Node's and the browser's Intl data can differ
+    // in tiny details (e.g. separators), which would cause a hydration warning.
     if (!mounted) return iso;
-    return new Date(iso).toLocaleString();
+    // Fixed locale + Europe/Madrid instead of the viewer's machine settings
+    return formatReservationDate(iso, "short");
   }
 
   async function logout() {
@@ -43,7 +125,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     setErr(null);
     const res = await fetch("/api/vendor/stripe/connect/onboard", { method: "POST" });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setErr(data?.error ?? "Failed to start onboarding");
+    if (!res.ok) return setErr(data?.error ?? "No se pudo iniciar la conexión");
     window.location.href = data.url;
   }
 
@@ -51,44 +133,214 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     setErr(null);
     const res = await fetch("/api/vendor/stripe/connect/manage", { method: "POST" });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setErr(data?.error ?? "Failed to open Stripe dashboard");
+    if (!res.ok) return setErr(data?.error ?? "No se pudo abrir el panel de Stripe");
     window.location.href = data.deep_link || data.url;
   }
 
   async function subscribe() {
     setErr(null);
-    const res = await fetch("/api/vendor/billing/subscribe", { method: "POST" });
+
+    // ✅ Block if must accept and checkbox isn't checked
+    if (mustAcceptLegalToProceed && !acceptTerms) {
+      return setErr("Debes aceptar los términos antes de continuar.");
+    }
+
+    const res = await fetch("/api/vendor/billing/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // send the actual checkbox value when needed
+        accept_terms: mustAcceptLegalToProceed ? acceptTerms : undefined,
+      }),
+    });
+
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setErr(data?.error ?? "Failed to start subscription");
+    if (!res.ok) return setErr(data?.error ?? "No se pudo iniciar la suscripción");
     window.location.href = data.url;
   }
+
+  // Which reservation has a request in flight (disables its buttons)
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function runAction(r: any, action: ReservationAction) {
+    setErr(null);
+    setBusyId(r.id);
+    try {
+      const res = await fetch(`/api/vendor/reservations/${r.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) setErr(data?.error ?? "No se pudo actualizar la reserva");
+    } finally {
+      setBusyId(null);
+      // Realtime would also deliver the change; reloading here makes the
+      // button feel instant and also covers the error case (e.g. "the guest
+      // just paid" -> the row now shows PAGADO).
+      reloadReservations();
+    }
+  }
+
+  function reservationUrl(id: string) {
+    if (typeof window === "undefined") return `/r/${id}`;
+    return `${window.location.origin}/r/${id}`;
+  }
+
+  async function copyLink(id: string) {
+    const url = reservationUrl(id);
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.top = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+
+      setCopiedId(id);
+      window.setTimeout(() => {
+        setCopiedId((cur) => (cur === id ? null : cur));
+      }, 1200);
+    } catch {
+      setErr("No se pudo copiar el enlace. Intenta de nuevo.");
+    }
+  }
+
+  // =========================================================================
+  // ✅ Live reservations table (Supabase Realtime)
+  //
+  // The server renders the first list (`reservations` prop). After that we
+  // listen for INSERT/UPDATE/DELETE on THIS restaurant's reservations and
+  // re-fetch the list, so a guest payment flips the row to PAGADO without a
+  // manual reload. RLS ("reservations_select_own") still applies: Realtime
+  // only delivers rows this logged-in owner is allowed to read.
+  // Requires migrations/002_realtime_reservations.sql (adds the table to the
+  // `supabase_realtime` publication).
+  // =========================================================================
+  const [rs, setRs] = useState<any[]>(reservations ?? []);
+  const [live, setLive] = useState(false);
+  // Rows that just became PAID, briefly highlighted so the change is noticed
+  const [justPaid, setJustPaid] = useState<Set<string>>(() => new Set());
+  // Last known status per row, to detect "PENDING -> PAID" transitions
+  const lastStatus = useRef<Map<string, string>>(
+    new Map((reservations ?? []).map((r: any) => [r.id, r.status]))
+  );
+
+  const reloadReservations = useCallback(async () => {
+    // Same query as the server page (app/vendor/page.tsx), scoped by RLS
+    const { data, error } = await supabase
+      .from("reservations")
+      .select("*")
+      .eq("restaurant_id", restaurant.id)
+      .order("created_at", { ascending: false })
+      .limit(25);
+    if (error || !data) return; // keep showing the current list
+
+    const newlyPaid = data
+      .filter((r: any) => r.status === "PAID" && lastStatus.current.has(r.id) && lastStatus.current.get(r.id) !== "PAID")
+      .map((r: any) => r.id as string);
+    lastStatus.current = new Map(data.map((r: any) => [r.id, r.status]));
+    setRs(data);
+
+    if (newlyPaid.length) {
+      setJustPaid((cur) => new Set([...Array.from(cur), ...newlyPaid]));
+      window.setTimeout(() => {
+        setJustPaid((cur) => {
+          const next = new Set(cur);
+          newlyPaid.forEach((id) => next.delete(id));
+          return next;
+        });
+      }, 4000);
+    }
+  }, [supabase, restaurant.id]);
+
+  useEffect(() => {
+    let channel: RealtimeChannel | null = null;
+    let cancelled = false;
+
+    (async () => {
+      // Make sure the realtime socket uses the logged-in user's token (not the
+      // anon key); otherwise RLS would filter out every event.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (cancelled) return;
+      if (session) await supabase.realtime.setAuth(session.access_token);
+      if (cancelled) return;
+
+      channel = supabase
+        .channel(`reservations:${restaurant.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "reservations",
+            filter: `restaurant_id=eq.${restaurant.id}`,
+          },
+          () => {
+            // Re-fetch rather than patch from the payload: keeps sorting and the
+            // 25-row limit correct, and is just one small query per change.
+            reloadReservations();
+          }
+        )
+        .subscribe((status) => {
+          setLive(status === "SUBSCRIBED");
+          // Fires on first connect AND after every reconnect (wifi drop, laptop
+          // sleep), so we catch any change missed while disconnected.
+          if (status === "SUBSCRIBED") reloadReservations();
+        });
+    })();
+
+    // Safety net: browsers throttle background tabs; refresh when the owner
+    // comes back to the tab.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reloadReservations();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [supabase, restaurant.id, reloadReservations]);
 
   return (
     <main className="card">
       <div className="hstack" style={{ justifyContent: "space-between" }}>
         <div className="hstack" style={{ gap: 12, alignItems: "baseline" }}>
-          <h1 style={{ marginTop: 0, marginBottom: 0 }}>
-            {restaurant.name || "Your restaurant"}
-          </h1>
+          <h1 style={{ marginTop: 0, marginBottom: 0 }}>{restaurant.name || "Tu restaurante"}</h1>
+
           <a href="/vendor/profile" className="small">
-            <button type="button">Edit</button>
+            Editar
           </a>
         </div>
-        <button onClick={logout}>Logout</button>
+
+        <button onClick={logout}>Cerrar sesión</button>
       </div>
 
       <p className="small">
-        Logged in as: <code>{userEmail}</code>
+        Conectado como: <code>{userEmail}</code>
       </p>
 
       <div className="hstack">
         <span className={subActive ? "badge ok" : "badge bad"}>
           <span className="dot" />
-          Subscription: {restaurant.subscription_status}
+          Suscripción: {subLabel}
         </span>
         <span className={connectReady ? "badge ok" : "badge bad"}>
           <span className="dot" />
-          Stripe: {connectReady ? "connected" : "not connected"}
+          Stripe: {connectReady ? "conectado" : "no conectado"}
         </span>
       </div>
 
@@ -96,24 +348,63 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
 
       <div className="row">
         <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-          <h3 style={{ marginTop: 0 }}>1) Subscription</h3>
-          <p className="small">Required to create deposit links.</p>
-          <button className="primary" onClick={subscribe}>
-            Subscribe / Manage billing
+          <h3 style={{ marginTop: 0 }}>1) Suscripción</h3>
+          <p className="small">Requerido para crear enlaces de depósito.</p>
+
+          {/* ✅ Show acceptance box whenever legal is not accepted for current version */}
+          {mustAcceptLegalToProceed ? (
+            <div className="small" style={{ marginBottom: 10 }}>
+              <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <input
+                  type="checkbox"
+                  checked={acceptTerms}
+                  onChange={(e) => setAcceptTerms(e.target.checked)}
+                  style={{ width: 18, height: 18, marginTop: 2 }}
+                />
+                <span>
+                  He leído y acepto los{" "}
+                  <a href="/terminos" target="_blank" rel="noreferrer">
+                    Términos y condiciones
+                  </a>
+                  , la{" "}
+                  <a href="/privacidad" target="_blank" rel="noreferrer">
+                    Política de privacidad
+                  </a>
+                  , la{" "}
+                  <a href="/cookies" target="_blank" rel="noreferrer">
+                    Política de cookies
+                  </a>{" "}
+                  y las{" "}
+                  <a href="/suscripcion" target="_blank" rel="noreferrer">
+                    Condiciones de suscripción
+                  </a>
+                  .
+                </span>
+              </label>
+            </div>
+          ) : null}
+
+          <button
+            className="primary"
+            onClick={subscribe}
+            disabled={mustAcceptLegalToProceed && !acceptTerms}
+            title={mustAcceptLegalToProceed && !acceptTerms ? "Debes aceptar los términos" : undefined}
+          >
+            Suscribirse / Gestionar facturación
           </button>
         </div>
 
         <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-          <h3 style={{ marginTop: 0 }}>2) Stripe account</h3>
+          <h3 style={{ marginTop: 0 }}>2) Cuenta de Stripe</h3>
 
           <p className="small">
             {connectReady
-              ? "Stripe is connected. Manage payouts and refunds in your Stripe Dashboard."
-              : "You are the merchant of record for guest payments."}
+              ? "Stripe está conectado. Gestiona pagos, reembolsos y ajustes en tu Panel de Stripe."
+              : "Eres el comercio responsable de los cobros a los clientes."}
           </p>
 
           <button className="primary" onClick={connectReady ? manageConnect : startConnect}>
-            {connectReady ? "Manage Stripe account" : "Start Stripe onboarding"}
+            {connectReady ? "Gestionar cuenta de Stripe" : "Conectar Stripe"}
           </button>
         </div>
       </div>
@@ -121,17 +412,23 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
       <div className="spacer" />
 
       <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-        <h3 style={{ marginTop: 0 }}>3) Create reservation link</h3>
+        <h3 style={{ marginTop: 0 }}>3) Crear enlace de reserva</h3>
         <p className="small">
           {gatingMessage ? (
             <span style={{ color: "var(--danger)" }}>{gatingMessage}</span>
           ) : (
-            <span>Ready ✅</span>
+            <span>Listo ✅</span>
           )}
         </p>
-        <a href="/vendor/reservations/new">
+
+        <a
+          href={Boolean(gatingMessage) ? undefined : "/vendor/reservations/new"}
+          onClick={(e) => {
+            if (gatingMessage) e.preventDefault();
+          }}
+        >
           <button className="primary" disabled={Boolean(gatingMessage)}>
-            Create new reservation
+            Crear nueva reserva
           </button>
         </a>
       </div>
@@ -144,42 +441,138 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
 
       <div className="spacer" />
 
-      <h3>Recent reservations</h3>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Date</th>
-            <th>Name</th>
-            <th>Party</th>
-            <th>Deposit</th>
-            <th>Link</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(reservations ?? []).map((r: any) => (
-            <tr key={r.id}>
-              <td>{r.status}</td>
-              <td>{formatDateSafe(r.datetime_iso)}</td>
-              <td>{r.customer_name || "—"}</td>
-              <td>{r.party_size}</td>
-              <td>{formatEUR(r.deposit_cents)}</td>
-              <td>
-                <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
-                  Open
-                </a>
-              </td>
-            </tr>
-          ))}
-          {(reservations ?? []).length === 0 ? (
+      <div className="hstack" style={{ alignItems: "baseline", gap: 10 }}>
+        <h3>Reservas recientes</h3>
+        <span
+          className="small"
+          title={live ? "La tabla se actualiza sola al recibir pagos" : "Sin conexión en tiempo real"}
+          style={{ color: live ? "var(--ok)" : undefined, opacity: live ? 1 : 0.6 }}
+        >
+          ● {live ? "En vivo" : "Conectando…"}
+        </span>
+      </div>
+
+      {/* ✅ Desktop/tablet table */}
+      <div className="tableWrap">
+        <table className="table">
+          <thead>
             <tr>
-              <td colSpan={6} className="small">
-                No reservations yet.
-              </td>
+              <th>Estado</th>
+              <th>Fecha</th>
+              <th>Nombre</th>
+              <th>Comensales</th>
+              <th>Depósito</th>
+              <th>Enlace</th>
+              <th>Acciones</th>
             </tr>
-          ) : null}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rs.map((r: any) => (
+              <tr key={r.id} className={justPaid.has(r.id) ? "justPaid" : undefined}>
+                <td>{statusLabel(r)}</td>
+                <td>{formatDateSafe(r.datetime_iso)}</td>
+                <td>{r.customer_name || "—"}</td>
+                <td>{r.party_size}</td>
+                <td>{formatEUR(r.deposit_cents)}</td>
+                <td>
+                  <div className="hstack" style={{ gap: 8, flexWrap: "nowrap" }}>
+                    <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
+                      Abrir
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => copyLink(r.id)}
+                      style={{ padding: "6px 10px" }}
+                      aria-label="Copiar enlace"
+                      title="Copiar enlace"
+                    >
+                      {copiedId === r.id ? "¡Copiado!" : "Copiar"}
+                    </button>
+                  </div>
+                </td>
+                <td>
+                  <RowActions r={r} busy={busyId === r.id} onAction={runAction} />
+                </td>
+              </tr>
+            ))}
+
+            {rs.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="small">
+                  Aún no hay reservas.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ✅ Mobile-friendly cards */}
+      <div className="resCards">
+        {rs.length === 0 ? (
+          <div className="small">Aún no hay reservas.</div>
+        ) : (
+          rs.map((r: any) => (
+            <div key={r.id} className={justPaid.has(r.id) ? "resCard justPaid" : "resCard"}>
+              <div className="resTop">
+                <span className={isPositiveStatus(r) ? "badge ok" : "badge"}>
+                  <span className="dot" />
+                  {statusLabel(r)}
+                </span>
+
+                <div className="hstack" style={{ gap: 8, flexWrap: "nowrap" }}>
+                  <a href={`/r/${r.id}`} target="_blank" rel="noreferrer">
+                    Abrir
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => copyLink(r.id)}
+                    style={{ padding: "6px 10px" }}
+                    aria-label="Copiar enlace"
+                    title="Copiar enlace"
+                  >
+                    {copiedId === r.id ? "¡Copiado!" : "Copiar"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="resGrid">
+                <div>
+                  <div className="small">
+                    <b>Fecha</b>
+                  </div>
+                  <div className="small">{formatDateSafe(r.datetime_iso)}</div>
+                </div>
+
+                <div>
+                  <div className="small">
+                    <b>Depósito</b>
+                  </div>
+                  <div className="small">{formatEUR(r.deposit_cents)}</div>
+                </div>
+
+                <div>
+                  <div className="small">
+                    <b>Nombre</b>
+                  </div>
+                  <div className="small">{r.customer_name || "—"}</div>
+                </div>
+
+                <div>
+                  <div className="small">
+                    <b>Comensales</b>
+                  </div>
+                  <div className="small">{r.party_size}</div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <RowActions r={r} busy={busyId === r.id} onAction={runAction} />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </main>
   );
 }

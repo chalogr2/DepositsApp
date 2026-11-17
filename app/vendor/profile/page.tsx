@@ -11,9 +11,9 @@ export default async function VendorProfilePage() {
   if (!user) {
     return (
       <main className="card">
-        <h1 style={{ marginTop: 0 }}>Edit restaurant</h1>
-        <p className="small">You’re not logged in.</p>
-        <a href="/vendor/login"><button className="primary">Login</button></a>
+        <h1 style={{ marginTop: 0 }}>Editar restaurante</h1>
+        <p className="small">No has iniciado sesión.</p>
+        <a href="/vendor/login"><button className="primary">Entrar</button></a>
       </main>
     );
   }

@@ -1,30 +1,45 @@
 export default function HomePage() {
   return (
-    <main className="card">
-      <h1 style={{ marginTop: 0 }}>Deposit Links — v3</h1>
-      <p className="small">
-        Restaurants self-register, connect Stripe, subscribe monthly, then generate refundable deposit payment links.
-      </p>
-      <div className="row">
-        <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-          <h3 style={{ marginTop: 0 }}>Restaurants</h3>
-          <ul className="small">
-            <li>Email login (magic link)</li>
-            <li>Subscribe monthly (required)</li>
-            <li>Connect Stripe (vendor is merchant)</li>
-            <li>Create reservation links</li>
-          </ul>
-          <a href="/vendor"><button className="primary">Go to restaurant portal</button></a>
+    <div className="container">
+      <main className="card hero">
+        <div className="heroGrid">
+          <div>
+            <h1 className="heroTitle">Depósitos para reservas, sin complicaciones</h1>
+
+            <p className="heroSub">
+              Crea enlaces de pago por reserva en segundos, cobra depósitos con Stripe y gestiona todo desde
+              un panel simple. Ideal para restaurantes en España.
+            </p>
+
+            <div className="pills" aria-label="Características">
+              <span className="pill">✅ Pagos con Stripe</span>
+              <span className="pill">✅ Enlace por reserva</span>
+              <span className="pill">✅ Panel de control</span>
+            </div>
+
+            <div className="ctaRow">
+              <a className="btn primary" href="/vendor">
+                Entrar al portal
+              </a>
+              <a className="btn secondary" href="/vendor">
+                Crear cuenta / Acceder
+              </a>
+            </div>
+
+            <div className="section small">
+              *Los depósitos ayudan a reducir no-shows. El restaurante gestiona sus cobros en Stripe.
+            </div>
+          </div>
+
+          <div className="screenshotShell" aria-label="Vista previa del panel">
+            <img
+              className="screenshot"
+              src="/landing-demo.png"
+              alt="Ejemplo del panel del restaurante"
+            />
+          </div>
         </div>
-        <div className="card" style={{ background: "rgba(18,26,40,.6)" }}>
-          <h3 style={{ marginTop: 0 }}>Admin</h3>
-          <ul className="small">
-            <li>View restaurants + statuses</li>
-            <li>View recent reservations</li>
-          </ul>
-          <a href="/admin"><button>Go to admin</button></a>
-        </div>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }

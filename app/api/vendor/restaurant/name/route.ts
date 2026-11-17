@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -24,8 +25,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Restaurant name is too long (max 80 chars)." }, { status: 400 });
     }
 
-    // Update only the row owned by this user
-    const { data: restaurant, error: rErr } = await supabase
+    // Write with the service role: the browser role has no UPDATE privilege
+    // (migration 003). Scoped to the caller's own row via owner_user_id, and
+    // only after the length validation above.
+    const { data: restaurant, error: rErr } = await supabaseAdmin()
       .from("restaurants")
       .update({ name: rawName })
       .eq("owner_user_id", user.id)

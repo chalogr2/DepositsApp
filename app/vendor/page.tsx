@@ -2,11 +2,19 @@ import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import VendorDashboardClient from "./vendor-dashboard-client";
 import Stripe from "stripe";
+import { stripePlatform } from "@/lib/stripe";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { syncRestaurantSubscription } from "@/lib/billing-sync";
+import { expireOverdueForRestaurant } from "@/lib/reservation-lifecycle";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function VendorPage() {
+export default async function VendorPage({
+  searchParams,
+}: {
+  searchParams?: { sub?: string; session_id?: string };
+}) {
   const supabase = supabaseServer();
   const {
     data: { user },
@@ -15,10 +23,10 @@ export default async function VendorPage() {
   if (!user) {
     return (
       <main className="card">
-        <h1 style={{ marginTop: 0 }}>Restaurant portal</h1>
-        <p className="small">You’re not logged in.</p>
+        <h1 style={{ marginTop: 0 }}>Portal del restaurante</h1>
+        <p className="small">No has iniciado sesión.</p>
         <a href="/vendor/login">
-          <button className="primary">Login / Register</button>
+          <button className="primary">Iniciar sesión / Registrarse</button>
         </a>
       </main>
     );
@@ -26,48 +34,81 @@ export default async function VendorPage() {
 
   await supabase.rpc("ensure_restaurant_for_user", { p_owner_user_id: user.id });
 
-  const { data: restaurant, error } = await supabase
+  // ✅ Returning from subscription Checkout: sync from Stripe NOW, before we
+  // read the DB. Stripe redirects the browser back immediately, but the
+  // webhook that updates our DB can arrive seconds later, so without this
+  // the first render showed the old "inactive" state until a manual reload.
+  if (searchParams?.sub === "success" && searchParams.session_id) {
+    await syncFromCheckoutReturn(supabase, user.id, searchParams.session_id);
+    // Drop the query string so a reload doesn't repeat the Stripe calls.
+    // (redirect() throws internally, so it must stay outside any try/catch.)
+    redirect("/vendor");
+  }
+
+  // ✅ Select only what we need + include legal columns
+  // NOTE: if your DB does not have stripe_account_id / stripe_onboarding_complete yet,
+  // remove them from this select.
+  const { data: restaurantRaw, error } = await supabase
     .from("restaurants")
-    .select("*")
+    .select(
+      `
+        id,
+        name,
+        owner_user_id,
+        stripe_account_id,
+        stripe_onboarding_complete,
+        stripe_customer_id,
+        stripe_subscription_id,
+        subscription_status,
+        subscription_current_period_end,
+        legal_accepted_at,
+        legal_version
+      `
+    )
     .eq("owner_user_id", user.id)
     .single();
+
+  const restaurant: any = restaurantRaw;
 
   if (error || !restaurant) {
     return (
       <main className="card">
-        <h1 style={{ marginTop: 0 }}>Restaurant portal</h1>
+        <h1 style={{ marginTop: 0 }}>Portal del restaurante</h1>
         <p className="small" style={{ color: "var(--danger)" }}>
-          Failed to load restaurant profile. Verify Supabase SQL + RLS.
+          No se pudo cargar el perfil del restaurante. Verifica el SQL de Supabase y las políticas RLS.
         </p>
       </main>
     );
   }
 
-  // ✅ Sync Stripe readiness from Stripe (only if we have an account id)
-  if (restaurant.stripe_account_id) {
+  // ✅ Sync Stripe readiness from Stripe (only if we have an account id and a secret key)
+  if (restaurant.stripe_account_id && process.env.STRIPE_PLATFORM_SECRET_KEY) {
     try {
-      const stripe = new Stripe(process.env.STRIPE_PLATFORM_SECRET_KEY!, {
+      const stripe = new Stripe(process.env.STRIPE_PLATFORM_SECRET_KEY, {
         apiVersion: "2024-06-20",
       });
 
-      const acct = await stripe.accounts.retrieve(restaurant.stripe_account_id);
+      const acct: any = await stripe.accounts.retrieve(restaurant.stripe_account_id);
 
-      const ready =
-        Boolean((acct as any).details_submitted) && Boolean((acct as any).charges_enabled);
+      const ready = Boolean(acct?.details_submitted) && Boolean(acct?.charges_enabled);
 
-      // Update only if changed (avoid extra writes)
-      if (Boolean(restaurant.stripe_onboarding_complete) !== ready) {
-        await supabase
-          .from("restaurants")
-          .update({ stripe_onboarding_complete: ready })
-          .eq("id", restaurant.id);
+      // Only update if this column exists in your DB (it should) and it changed
+      if (typeof restaurant.stripe_onboarding_complete !== "undefined") {
+        if (Boolean(restaurant.stripe_onboarding_complete) !== ready) {
+          // Service role: the user's own session cannot write this column
+          // (it never could on the live DB, so this sync silently did nothing
+          // before). The value comes from Stripe, not from the user.
+          await supabaseAdmin()
+            .from("restaurants")
+            .update({ stripe_onboarding_complete: ready })
+            .eq("id", restaurant.id)
+            .eq("owner_user_id", user.id);
 
-        // Keep local object consistent for this request
-        restaurant.stripe_onboarding_complete = ready;
+          restaurant.stripe_onboarding_complete = ready;
+        }
       }
     } catch {
-      // If Stripe call fails, do NOT mark as connected.
-      // Just leave current DB value as-is.
+      // If Stripe call fails, do not change anything
     }
   }
 
@@ -75,6 +116,11 @@ export default async function VendorPage() {
   const name = String(restaurant.name ?? "").trim();
   const needsName = !name || name === "My Restaurant";
   if (needsName) redirect("/vendor/onboarding");
+
+  // Unpaid links whose reservation time has passed -> EXPIRED (no cron job;
+  // see lib/reservation-lifecycle.ts). Failure is harmless: the UI already
+  // shows them as EXPIRADA via effectiveStatus().
+  await expireOverdueForRestaurant(restaurant.id).catch(() => {});
 
   const { data: reservations } = await supabase
     .from("reservations")
@@ -90,4 +136,47 @@ export default async function VendorPage() {
       reservations={reservations ?? []}
     />
   );
+}
+
+/**
+ * Verifies the Checkout session really belongs to THIS user's restaurant,
+ * then copies the subscription state from Stripe into our DB.
+ *
+ * Security: `session_id` comes from the URL, so anyone could type any value.
+ * We never trust it blindly. Stripe must confirm that the session exists, is a
+ * completed subscription checkout, and was created for this restaurant
+ * (client_reference_id). Otherwise we do nothing.
+ *
+ * Failures are swallowed on purpose: the webhook will still sync the row a
+ * few seconds later, so the worst case is the old behaviour (reload needed).
+ */
+async function syncFromCheckoutReturn(
+  supabase: ReturnType<typeof supabaseServer>,
+  userId: string,
+  sessionId: string
+) {
+  try {
+    const { data: own } = await supabase
+      .from("restaurants")
+      .select("id")
+      .eq("owner_user_id", userId)
+      .single();
+    if (!own) return;
+
+    const session = await stripePlatform().checkout.sessions.retrieve(sessionId);
+
+    const belongsToUser = session.client_reference_id === own.id;
+    const isCompletedSubscription = session.mode === "subscription" && session.status === "complete";
+    const subscriptionId = typeof session.subscription === "string" ? session.subscription : session.subscription?.id;
+
+    if (!belongsToUser || !isCompletedSubscription || !subscriptionId) return;
+
+    await syncRestaurantSubscription({
+      restaurantId: own.id,
+      subscriptionId,
+      customerId: typeof session.customer === "string" ? session.customer : session.customer?.id ?? null,
+    });
+  } catch {
+    // Fall back to the webhook (see comment above)
+  }
 }
