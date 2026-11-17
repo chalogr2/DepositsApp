@@ -129,3 +129,15 @@ for each row execute function public.set_updated_at();
 
 -- RLS enabled; no policies for regular users since this table is service-role only.
 alter table public.reservation_checkout_sessions enable row level security;
+
+-- Realtime: stream reservation changes to the vendor dashboard (RLS still applies).
+-- Same as migrations/002_realtime_reservations.sql.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'reservations'
+  ) then
+    alter publication supabase_realtime add table public.reservations;
+  end if;
+end $$;

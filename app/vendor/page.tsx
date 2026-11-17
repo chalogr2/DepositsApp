@@ -2,11 +2,17 @@ import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import VendorDashboardClient from "./vendor-dashboard-client";
 import Stripe from "stripe";
+import { stripePlatform } from "@/lib/stripe";
+import { syncRestaurantSubscription } from "@/lib/billing-sync";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function VendorPage() {
+export default async function VendorPage({
+  searchParams,
+}: {
+  searchParams?: { sub?: string; session_id?: string };
+}) {
   const supabase = supabaseServer();
   const {
     data: { user },
@@ -25,6 +31,17 @@ export default async function VendorPage() {
   }
 
   await supabase.rpc("ensure_restaurant_for_user", { p_owner_user_id: user.id });
+
+  // ✅ Returning from subscription Checkout: sync from Stripe NOW, before we
+  // read the DB. Stripe redirects the browser back immediately, but the
+  // webhook that updates our DB can arrive seconds later, so without this
+  // the first render showed the old "inactive" state until a manual reload.
+  if (searchParams?.sub === "success" && searchParams.session_id) {
+    await syncFromCheckoutReturn(supabase, user.id, searchParams.session_id);
+    // Drop the query string so a reload doesn't repeat the Stripe calls.
+    // (redirect() throws internally, so it must stay outside any try/catch.)
+    redirect("/vendor");
+  }
 
   // ✅ Select only what we need + include legal columns
   // NOTE: if your DB does not have stripe_account_id / stripe_onboarding_complete yet,
@@ -108,4 +125,47 @@ export default async function VendorPage() {
       reservations={reservations ?? []}
     />
   );
+}
+
+/**
+ * Verifies the Checkout session really belongs to THIS user's restaurant,
+ * then copies the subscription state from Stripe into our DB.
+ *
+ * Security: `session_id` comes from the URL, so anyone could type any value.
+ * We never trust it blindly. Stripe must confirm that the session exists, is a
+ * completed subscription checkout, and was created for this restaurant
+ * (client_reference_id). Otherwise we do nothing.
+ *
+ * Failures are swallowed on purpose: the webhook will still sync the row a
+ * few seconds later, so the worst case is the old behaviour (reload needed).
+ */
+async function syncFromCheckoutReturn(
+  supabase: ReturnType<typeof supabaseServer>,
+  userId: string,
+  sessionId: string
+) {
+  try {
+    const { data: own } = await supabase
+      .from("restaurants")
+      .select("id")
+      .eq("owner_user_id", userId)
+      .single();
+    if (!own) return;
+
+    const session = await stripePlatform().checkout.sessions.retrieve(sessionId);
+
+    const belongsToUser = session.client_reference_id === own.id;
+    const isCompletedSubscription = session.mode === "subscription" && session.status === "complete";
+    const subscriptionId = typeof session.subscription === "string" ? session.subscription : session.subscription?.id;
+
+    if (!belongsToUser || !isCompletedSubscription || !subscriptionId) return;
+
+    await syncRestaurantSubscription({
+      restaurantId: own.id,
+      subscriptionId,
+      customerId: typeof session.customer === "string" ? session.customer : session.customer?.id ?? null,
+    });
+  } catch {
+    // Fall back to the webhook (see comment above)
+  }
 }

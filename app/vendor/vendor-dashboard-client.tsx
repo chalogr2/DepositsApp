@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { LEGAL_VERSION } from "@/lib/config";
+import { isSubscriptionActive, subscriptionLabel } from "@/lib/subscription";
 
 function formatEUR(cents: number) {
   return `€${(cents / 100).toFixed(2)}`;
@@ -23,7 +25,9 @@ function statusLabel(s: string) {
 }
 
 export default function VendorDashboardClient({ userEmail, restaurant, reservations }: any) {
-  const supabase = supabaseBrowser();
+  // Stable reference (createBrowserClient is a singleton anyway, but this makes
+  // it explicit so the realtime effect below doesn't re-run every render)
+  const supabase = useMemo(() => supabaseBrowser(), []);
   const [err, setErr] = useState<string | null>(null);
 
   // hydration-safe date formatting
@@ -36,10 +40,11 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
   // acceptance checkbox state
   const [acceptTerms, setAcceptTerms] = useState(false);
 
-  const subActive =
-    restaurant.subscription_status === "active" &&
-    (!restaurant.subscription_current_period_end ||
-      new Date(restaurant.subscription_current_period_end) > new Date());
+  // Shared with the reservations API so UI and server always agree
+  const subActive = isSubscriptionActive(restaurant);
+  // Badge text derived from the same logic (shows "caducada" when the DB says
+  // "active" but the paid period is over, instead of a red "active")
+  const subLabel = subscriptionLabel(restaurant);
 
   // ✅ only true-connect when onboarding is complete
   const connectReady =
@@ -138,7 +143,105 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     }
   }
 
-  const rs = reservations ?? [];
+  // =========================================================================
+  // ✅ Live reservations table (Supabase Realtime)
+  //
+  // The server renders the first list (`reservations` prop). After that we
+  // listen for INSERT/UPDATE/DELETE on THIS restaurant's reservations and
+  // re-fetch the list, so a guest payment flips the row to PAGADO without a
+  // manual reload. RLS ("reservations_select_own") still applies: Realtime
+  // only delivers rows this logged-in owner is allowed to read.
+  // Requires migrations/002_realtime_reservations.sql (adds the table to the
+  // `supabase_realtime` publication).
+  // =========================================================================
+  const [rs, setRs] = useState<any[]>(reservations ?? []);
+  const [live, setLive] = useState(false);
+  // Rows that just became PAID, briefly highlighted so the change is noticed
+  const [justPaid, setJustPaid] = useState<Set<string>>(() => new Set());
+  // Last known status per row, to detect "PENDING -> PAID" transitions
+  const lastStatus = useRef<Map<string, string>>(
+    new Map((reservations ?? []).map((r: any) => [r.id, r.status]))
+  );
+
+  const reloadReservations = useCallback(async () => {
+    // Same query as the server page (app/vendor/page.tsx), scoped by RLS
+    const { data, error } = await supabase
+      .from("reservations")
+      .select("*")
+      .eq("restaurant_id", restaurant.id)
+      .order("created_at", { ascending: false })
+      .limit(25);
+    if (error || !data) return; // keep showing the current list
+
+    const newlyPaid = data
+      .filter((r: any) => r.status === "PAID" && lastStatus.current.has(r.id) && lastStatus.current.get(r.id) !== "PAID")
+      .map((r: any) => r.id as string);
+    lastStatus.current = new Map(data.map((r: any) => [r.id, r.status]));
+    setRs(data);
+
+    if (newlyPaid.length) {
+      setJustPaid((cur) => new Set([...Array.from(cur), ...newlyPaid]));
+      window.setTimeout(() => {
+        setJustPaid((cur) => {
+          const next = new Set(cur);
+          newlyPaid.forEach((id) => next.delete(id));
+          return next;
+        });
+      }, 4000);
+    }
+  }, [supabase, restaurant.id]);
+
+  useEffect(() => {
+    let channel: RealtimeChannel | null = null;
+    let cancelled = false;
+
+    (async () => {
+      // Make sure the realtime socket uses the logged-in user's token (not the
+      // anon key); otherwise RLS would filter out every event.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (cancelled) return;
+      if (session) await supabase.realtime.setAuth(session.access_token);
+      if (cancelled) return;
+
+      channel = supabase
+        .channel(`reservations:${restaurant.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "reservations",
+            filter: `restaurant_id=eq.${restaurant.id}`,
+          },
+          () => {
+            // Re-fetch rather than patch from the payload: keeps sorting and the
+            // 25-row limit correct, and is just one small query per change.
+            reloadReservations();
+          }
+        )
+        .subscribe((status) => {
+          setLive(status === "SUBSCRIBED");
+          // Fires on first connect AND after every reconnect (wifi drop, laptop
+          // sleep), so we catch any change missed while disconnected.
+          if (status === "SUBSCRIBED") reloadReservations();
+        });
+    })();
+
+    // Safety net: browsers throttle background tabs; refresh when the owner
+    // comes back to the tab.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reloadReservations();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [supabase, restaurant.id, reloadReservations]);
 
   return (
     <main className="card">
@@ -161,7 +264,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
       <div className="hstack">
         <span className={subActive ? "badge ok" : "badge bad"}>
           <span className="dot" />
-          Suscripción: {restaurant.subscription_status}
+          Suscripción: {subLabel}
         </span>
         <span className={connectReady ? "badge ok" : "badge bad"}>
           <span className="dot" />
@@ -266,7 +369,16 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
 
       <div className="spacer" />
 
-      <h3>Reservas recientes</h3>
+      <div className="hstack" style={{ alignItems: "baseline", gap: 10 }}>
+        <h3>Reservas recientes</h3>
+        <span
+          className="small"
+          title={live ? "La tabla se actualiza sola al recibir pagos" : "Sin conexión en tiempo real"}
+          style={{ color: live ? "var(--ok)" : undefined, opacity: live ? 1 : 0.6 }}
+        >
+          ● {live ? "En vivo" : "Conectando…"}
+        </span>
+      </div>
 
       {/* ✅ Desktop/tablet table */}
       <div className="tableWrap">
@@ -283,7 +395,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
           </thead>
           <tbody>
             {rs.map((r: any) => (
-              <tr key={r.id}>
+              <tr key={r.id} className={justPaid.has(r.id) ? "justPaid" : undefined}>
                 <td>{statusLabel(r.status)}</td>
                 <td>{formatDateSafe(r.datetime_iso)}</td>
                 <td>{r.customer_name || "—"}</td>
@@ -325,7 +437,7 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
           <div className="small">Aún no hay reservas.</div>
         ) : (
           rs.map((r: any) => (
-            <div key={r.id} className="resCard">
+            <div key={r.id} className={justPaid.has(r.id) ? "resCard justPaid" : "resCard"}>
               <div className="resTop">
                 <span className={r.status === "PAID" ? "badge ok" : "badge"}>
                   <span className="dot" />

@@ -329,3 +329,17 @@ code{
 }
 
 .muted{color:var(--muted)}
+
+/* =========================
+   ✅ Live update highlight
+   A row/card that just became PAID (via Supabase Realtime) flashes green and
+   fades back to its normal background. Only a `from` keyframe is given, so it
+   animates towards whatever background the element normally has.
+   ========================= */
+@keyframes paidFlash{
+  from{background-color:rgba(74,222,128,.35)}
+}
+.justPaid{animation:paidFlash 4s ease-out}
+@media (prefers-reduced-motion: reduce){
+  .justPaid{animation:none;outline:2px solid var(--ok)}
+}

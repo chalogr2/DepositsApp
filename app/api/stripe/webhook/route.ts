@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { stripePlatform } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { syncRestaurantSubscription } from "@/lib/billing-sync";
 
 export const runtime = "nodejs"; // ✅ important for Stripe signature verification on Vercel
 export const dynamic = "force-dynamic";
@@ -31,18 +32,18 @@ export async function POST(req: Request) {
 
   const admin = supabaseAdmin();
 
-  // Helper: map Stripe subscription -> our normalized status + write to restaurant
+  // customer.subscription.* events: find which restaurant, then sync from Stripe.
+  // We pass only the IDs on; syncRestaurantSubscription() re-fetches the
+  // CURRENT subscription, so a late/out-of-order event can't overwrite a newer
+  // state (e.g. an old "incomplete" arriving after "active").
   async function applySubscription(sub: any) {
-    const status = String(sub?.status ?? "inactive");
-    const end = sub?.current_period_end
-      ? new Date(sub.current_period_end * 1000).toISOString()
-      : null;
+    if (!sub?.id) return;
 
-    // Preferred mapping: metadata.restaurant_id (if present)
-    // Fallback: look up by stripe_subscription_id
+    // Preferred mapping: metadata.restaurant_id (set via subscription_data.metadata)
+    // Fallback: look up by stripe_subscription_id (older subscriptions)
     let restaurantId: string | null = sub?.metadata?.restaurant_id ?? null;
 
-    if (!restaurantId && sub?.id) {
+    if (!restaurantId) {
       const { data: row } = await admin
         .from("restaurants")
         .select("id")
@@ -53,55 +54,28 @@ export async function POST(req: Request) {
 
     if (!restaurantId) return;
 
-    const normalized =
-      status === "active"
-        ? "active"
-        : status === "trialing"
-        ? "trialing"
-        : status === "past_due"
-        ? "past_due"
-        : status === "canceled"
-        ? "canceled"
-        : "inactive";
-
-    const { error } = await admin
-      .from("restaurants")
-      .update({
-        subscription_status: normalized,
-        stripe_subscription_id: sub?.id ?? null,
-        subscription_current_period_end: end,
-      })
-      .eq("id", restaurantId);
-
-    if (error) throw new Error(`Supabase update (applySubscription) failed: ${error.message}`);
+    await syncRestaurantSubscription({
+      restaurantId,
+      subscriptionId: sub.id,
+      customerId: typeof sub.customer === "string" ? sub.customer : null,
+    });
   }
 
-  // When checkout completes, store stripe_customer_id (+ subscription id), then sync subscription status
+  // checkout.session.completed (subscription mode): store customer + sync subscription
   async function applyCheckoutSession(session: any) {
     if (session?.mode !== "subscription") return;
 
     const restaurantId: string | null =
       session?.metadata?.restaurant_id || session?.client_reference_id || null;
+    const subscriptionId = (session?.subscription as string) || null;
 
-    if (!restaurantId) return;
+    if (!restaurantId || !subscriptionId) return;
 
-    const stripeCustomerId = (session?.customer as string) || null;
-    const stripeSubscriptionId = (session?.subscription as string) || null;
-
-    const { error } = await admin
-      .from("restaurants")
-      .update({
-        stripe_customer_id: stripeCustomerId,
-        stripe_subscription_id: stripeSubscriptionId,
-      })
-      .eq("id", restaurantId);
-
-    if (error) throw new Error(`Supabase update (applyCheckoutSession) failed: ${error.message}`);
-
-    if (stripeSubscriptionId) {
-      const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
-      await applySubscription(sub);
-    }
+    await syncRestaurantSubscription({
+      restaurantId,
+      subscriptionId,
+      customerId: (session?.customer as string) || null,
+    });
   }
 
   try {

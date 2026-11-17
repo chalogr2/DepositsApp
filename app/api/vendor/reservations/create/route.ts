@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseServer } from "@/lib/supabase/server";
 import { appBaseUrl } from "@/lib/stripe";
+import { isSubscriptionActive } from "@/lib/subscription";
 
 const schema = z.object({
   restaurantId: z.string().uuid(),
@@ -30,8 +31,8 @@ export async function POST(req: Request) {
 
   if (re || !restaurant) return NextResponse.json({ error: "Restaurant not found" }, { status: 404 });
 
-  const subActive = restaurant.subscription_status === "active" &&
-    (!restaurant.subscription_current_period_end || new Date(restaurant.subscription_current_period_end) > new Date());
+  // Same rule the dashboard uses (lib/subscription.ts)
+  const subActive = isSubscriptionActive(restaurant);
   const connectReady = Boolean(restaurant.stripe_account_id) && Boolean(restaurant.stripe_onboarding_complete);
   if (!(subActive && connectReady)) return NextResponse.json({ error: "Subscription inactive or Stripe not connected" }, { status: 403 });
 

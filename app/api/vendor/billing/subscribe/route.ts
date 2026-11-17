@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { LEGAL_VERSION } from "@/lib/config";
+import { stripePlatform, appBaseUrl } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -37,12 +38,10 @@ export async function POST(req: Request) {
     );
   }
 
-  const stripe = new Stripe(process.env.STRIPE_PLATFORM_SECRET_KEY!, {
-    apiVersion: "2024-06-20",
-  });
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const returnUrl = `${appUrl}/vendor`;
+  // Shared helpers: same Stripe client + same base-URL logic as the rest of the app
+  // (appBaseUrl() reads NEXT_PUBLIC_APP_URL, then APP_BASE_URL, then VERCEL_URL).
+  const stripe = stripePlatform();
+  const returnUrl = `${appBaseUrl()}/vendor`;
 
   const hasAcceptedCurrentLegal =
     Boolean(restaurant.legal_accepted_at) && restaurant.legal_version === LEGAL_VERSION;
@@ -77,25 +76,94 @@ export async function POST(req: Request) {
     }
   }
 
-  // ✅ If we already have a Stripe Customer, go to Customer Portal
-  if (restaurant.stripe_customer_id) {
-    const portal = await stripe.billingPortal.sessions.create({
-      customer: restaurant.stripe_customer_id,
-      return_url: returnUrl,
+  try {
+    // Which Stripe customer (if any) the new Checkout should be attached to.
+    let customerId: string | null = restaurant.stripe_customer_id ?? null;
+
+    if (customerId) {
+      // ✅ Having a customer id does NOT mean having a subscription.
+      // Ask Stripe (the source of truth) instead of trusting our DB copy.
+      const { customerExists, live } = await findLiveSubscription(stripe, customerId);
+
+      // Still subscribed (or needs to fix a payment) -> manage it in the Portal
+      if (live) {
+        const portal = await stripe.billingPortal.sessions.create({
+          customer: customerId,
+          return_url: returnUrl,
+        });
+        return NextResponse.json({ url: portal.url });
+      }
+
+      // No live subscription: our DB row is stale. Self-heal it so the
+      // dashboard stops claiming "active", then fall through to Checkout.
+      const admin = supabaseAdmin();
+      await admin
+        .from("restaurants")
+        .update({
+          subscription_status: "inactive",
+          stripe_subscription_id: null,
+          subscription_current_period_end: null,
+          // If the customer itself is gone from Stripe, forget it too
+          ...(customerExists ? {} : { stripe_customer_id: null }),
+        })
+        .eq("id", restaurant.id)
+        .eq("owner_user_id", user.id);
+
+      if (!customerExists) customerId = null;
+    }
+
+    // ✅ Create subscription checkout (first-time OR re-subscribe)
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      line_items: [{ price: process.env.STRIPE_SUB_PRICE_ID!, quantity: 1 }],
+      // {CHECKOUT_SESSION_ID} is replaced by Stripe with the real session id.
+      // The dashboard uses it to sync the new subscription immediately on
+      // return, instead of waiting for the webhook (see lib/billing-sync.ts).
+      success_url: `${returnUrl}?sub=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${returnUrl}?sub=cancel`,
+      client_reference_id: restaurant.id,
+      metadata: { restaurant_id: restaurant.id },
+      // Put restaurant_id on the SUBSCRIPTION too, so customer.subscription.*
+      // webhooks can map straight to the restaurant without a DB lookup.
+      subscription_data: { metadata: { restaurant_id: restaurant.id } },
+      // Reuse the existing customer (keeps invoice history in one place);
+      // Stripe only accepts one of `customer` / `customer_email`.
+      ...(customerId
+        ? { customer: customerId }
+        : { customer_email: user.email ?? undefined }),
     });
-    return NextResponse.json({ url: portal.url });
+
+    return NextResponse.json({ url: session.url });
+  } catch (e: any) {
+    // Return JSON (not an HTML 500 page) so the dashboard can show the reason
+    return NextResponse.json(
+      { error: `Error de Stripe: ${e?.message ?? "desconocido"}` },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Subscription statuses where the restaurant still "has" a subscription and
+ * should manage it in the Billing Portal (cancel, update card, pay overdue
+ * invoice). Anything else (canceled, incomplete_expired, incomplete, or no
+ * subscription at all) means they need a NEW Checkout.
+ */
+const LIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
+
+async function findLiveSubscription(
+  stripe: Stripe,
+  customerId: string
+): Promise<{ customerExists: boolean; live: Stripe.Subscription | null }> {
+  try {
+    const customer = await stripe.customers.retrieve(customerId);
+    if ((customer as Stripe.DeletedCustomer).deleted) return { customerExists: false, live: null };
+  } catch (e: any) {
+    if (e?.code === "resource_missing") return { customerExists: false, live: null };
+    throw e;
   }
 
-  // ✅ Otherwise, create subscription checkout
-  const session = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    line_items: [{ price: process.env.STRIPE_SUB_PRICE_ID!, quantity: 1 }],
-    success_url: `${returnUrl}?sub=success`,
-    cancel_url: `${returnUrl}?sub=cancel`,
-    client_reference_id: restaurant.id,
-    metadata: { restaurant_id: restaurant.id },
-    customer_email: user.email ?? undefined,
-  });
-
-  return NextResponse.json({ url: session.url });
+  const subs = await stripe.subscriptions.list({ customer: customerId, status: "all", limit: 20 });
+  const live = subs.data.find((s) => LIVE_SUBSCRIPTION_STATUSES.has(s.status)) ?? null;
+  return { customerExists: true, live };
 }
