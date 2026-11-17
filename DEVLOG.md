@@ -28,6 +28,93 @@ This file records **what changed, why, and how we checked it**, so any developer
 
 ---
 
+## 2026-11-18: Automated tests, CI, portfolio README (backlog 14, 13)
+
+**Branch:** `staging`. The previous work was pushed as `bd99e9b`.
+
+### Why
+The project is going on GitHub as a portfolio piece. Until now, every claim in
+this log ("the replay attack is blocked", "times show in Madrid") was checked
+by hand once. Tests make those claims **repeatable**, and CI runs them on every push.
+
+### What was added
+
+**1. Vitest** (`npm test`), with `vitest.config.mts` mapping the `@/` import
+alias the app uses. Vitest was picked over Jest because it runs TypeScript and ESM
+directly, with no Babel/ts-jest setup.
+
+**2. Tests, chosen by where a bug would cost money or trust:**
+
+| File | What it proves |
+|---|---|
+| `tests/reservation-payments.test.ts` | The only function that marks a reservation PAID rejects a session replayed against another reservation, a session from another Stripe account, the wrong amount or currency, an unpaid session, and a subscription session. In every rejection case the database is left unchanged. It also checks idempotency, late payment on EXPIRED, and that a late webhook on ATTENDED or CANCELED is handled correctly. |
+| `tests/reservation-status.test.ts` | Every status × before/after the reservation time, including the exact-second boundary of the "attended only after the time" rule. |
+| `tests/subscription.test.ts` | `trialing` is active. "DB says active but the period is over" is not active and is labelled "caducada" (the original stale-badge bug). |
+| `tests/datetime-money.test.ts` | Madrid winter (+1) and summer (+2) offsets. `"10,50"` → 1050 cents, empty → 0, and `"0.1"` → 10 despite float rounding. |
+
+**How the payment tests run without a database.** `markReservationPaidFromSession`
+calls `supabaseAdmin().from(...).select().eq().maybeSingle()` and so on.
+`vi.mock("@/lib/supabase/admin")` replaces it with a ~25-line in-memory fake that
+supports just those methods: `eq`/`in` filters, and an `update` that only touches
+matching rows. That last part is what makes the conditional-update tests meaningful.
+Because the fake holds real rows, a test can assert "status is still PENDING"
+after a rejected attack.
+
+**Checking that the tests can fail.** A test that can't fail proves nothing. I
+temporarily deleted the amount check from `lib/reservation-payments.ts`, and
+the suite went red on exactly "wrong amount". Then I restored the file.
+
+```
+× markReservationPaidFromSession > rejects (and changes nothing) > wrong amount
+Tests  1 failed | 42 passed (43)
+```
+
+**A small refactor to make one function testable.** `parseEurosToCents` moved
+from inside the create-reservation component to `lib/money.ts`. Behaviour is
+unchanged; it just has to be importable from a test.
+
+**3. CI** (`.github/workflows/ci.yml`): on every push to `main`/`staging` and
+on every PR, it runs `npm ci` → typecheck → lint → tests. `next build` isn't
+included because it needs real Supabase/Stripe environment variables.
+New npm scripts: `typecheck`, `test`.
+
+**4. README rewritten for portfolio readers.** It now leads with the problem and
+the business model, then **engineering highlights** (the payment and security
+problems solved, each linked back to this log), then Mermaid diagrams: the
+reservation state machine, the system architecture, and the guest-payment sequence
+with its two confirmation paths. Tests, setup and roadmap follow.
+Screenshots of the current UI (dashboard, create form, link created, guest
+page) are in `docs/screenshots/`, outside `public/`, since only GitHub needs
+them, not the running app. Each was checked for personal data before it was added:
+the account email and real guest names are blurred.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npm test` | ✅ 43 passed |
+| Tests fail when a check is removed | ✅ (see above) |
+| `npm run typecheck`, `npm run lint` | ✅ (only the existing `<img>` warning) |
+
+### Found while doing this: privacy issue in a screenshot
+`public/landing-demo.png`, used on the landing page, showed the account email
+with a weak blur that was partly readable. ✅ The owner re-blurred it; I checked
+it and it's no longer readable. (It still shows the older dashboard UI.)
+
+The contact page (`app/contacto/page.tsx`) also showed a personal email. It now
+shows a placeholder, `chalo2@chalodev.com`, because this is a portfolio project
+and not a live service. A scan of every file (outside `node_modules`) found no
+other personal data: the legal pages use placeholders (`TU_NIF`, `TU_DIRECCIÓN`).
+
+**Note: git history.** Changing the files doesn't remove the old email or the
+old screenshot from **earlier commits** (the email first appears in `8d0ae81`).
+Anyone can browse those once the repo is public. The options were to publish a
+fresh, squashed history or to rewrite it with `git filter-repo`.
+**Decision (owner): keep the history as it is.** Showing the real commit history
+matters more for the portfolio, and that address is already widely known.
+
+---
+
 ## 2026-11-17: Reservation lifecycle, create-link screen, quick wins (backlog 8, 10, 12, 13, 15)
 
 **Branch:** `staging`. The critical fixes were pushed first as `9ff9d7e`.
@@ -829,7 +916,7 @@ Priority: 🔴 must fix before real users · 🟠 needed for a usable MVP · �
 | 11 | 🟡 | Dashboard shows only the latest 25 reservations (no pagination/search/filter). | dashboard |
 | 12 | ✅ | ~~`trialing` inconsistent; admin title wrong.~~ Fixed: one `isSubscriptionActive()`. | admin, `lib/subscription.ts` |
 | 13 | ✅ | ~~README outdated.~~ Rewritten. | `README.md` |
-| 14 | 🟡 | No automated tests, no error monitoring. | — |
+| 14 | 🟡 | ~~No automated tests~~ ✅ Vitest + CI (2026-11-18). Error monitoring still missing. | `tests/`, `.github/workflows/` |
 | 15 | ✅ | ~~Middleware ran `getUser()` on webhooks and guest routes.~~ Fixed: narrower matcher. | `middleware.ts` |
 
 ---

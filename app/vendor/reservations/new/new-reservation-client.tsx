@@ -2,22 +2,14 @@
 import { useEffect, useState } from "react";
 import { formatReservationDate, toDatetimeLocalValue } from "@/lib/datetime";
 import { MAX_DEPOSIT_CENTS, MIN_DEPOSIT_CENTS } from "@/lib/config";
+import { formatEUR, parseEurosToCents } from "@/lib/money";
 
 const DEFAULT_POLICY = `El depósito es reembolsable si se cancela con 24h+ de antelación a la hora de la reserva.
 Si no te presentas, el depósito podrá retenerse para cubrir costes.
 El depósito se aplicará a la cuenta final cuando asistas.`;
 
-const eur = (cents: number) => `€${(cents / 100).toFixed(2)}`;
-
-/**
- * "10", "10.5", "10,50" (Spanish keyboards use a comma) -> cents.
- * Empty or not a number -> 0, so the min-deposit rule gives the message
- * instead of the field refusing to be empty.
- */
-function parseEurosToCents(input: string): number {
-  const n = Number(input.trim().replace(",", "."));
-  return Number.isFinite(n) ? Math.round(n * 100) : 0;
-}
+// parseEurosToCents lives in lib/money.ts so it can be unit-tested
+const eur = formatEUR;
 
 type Created = { url: string; customerName: string; datetimeISO: string; depositCents: number };
 

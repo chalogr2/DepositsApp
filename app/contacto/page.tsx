@@ -9,7 +9,8 @@ export default function ContactoPage() {
       </p>
 
       <p>
-        <b>Email:</b> <a href="mailto:chalogonzruiz@gmail.com">chalogonzruiz@gmail.com</a>
+        {/* Placeholder address: this is a portfolio project, not a live service */}
+        <b>Email:</b> <a href="mailto:chalo2@chalodev.com">chalo2@chalodev.com</a>
       </p>
 
       <h3>Qué incluir en tu mensaje</h3>
