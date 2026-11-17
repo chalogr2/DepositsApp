@@ -5,24 +5,60 @@ import { supabaseBrowser } from "@/lib/supabase/browser";
 import { LEGAL_VERSION } from "@/lib/config";
 import { isSubscriptionActive, subscriptionLabel } from "@/lib/subscription";
 import { formatReservationDate } from "@/lib/datetime";
+import {
+  ACTION_LABEL,
+  allowedActions,
+  effectiveStatus,
+  isPositiveStatus,
+  statusLabel,
+  type ReservationAction,
+} from "@/lib/reservation-status";
 
 function formatEUR(cents: number) {
   return `€${(cents / 100).toFixed(2)}`;
 }
 
-function statusLabel(s: string) {
-  switch (s) {
-    case "PAID":
-      return "✅ PAGADO";
-    case "PENDING":
-      return "❌ PENDIENTE";
-    case "CANCELED":
-      return "❌ CANCELADO";
-    case "EXPIRED":
-      return "❌ EXPIRADA";
-    default:
-      return s || "—";
+/**
+ * Buttons for the actions allowed on one reservation (lib/reservation-status.ts).
+ * "Cancelar" on a PAID reservation moves money, so it asks for a second click
+ * ("¿Reembolsar €X?") inline, instead of a browser confirm() popup.
+ */
+function RowActions({ r, busy, onAction }: { r: any; busy: boolean; onAction: (r: any, a: ReservationAction) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const actions = allowedActions(r);
+  if (!actions.length) return null;
+
+  const isPaid = effectiveStatus(r) !== "PENDING";
+
+  if (confirming) {
+    return (
+      <div className="hstack" style={{ gap: 6, flexWrap: "nowrap" }}>
+        <span className="small">{isPaid ? `¿Reembolsar ${formatEUR(r.deposit_cents)}?` : "¿Cancelar el enlace?"}</span>
+        <button type="button" className="danger" disabled={busy} onClick={() => { setConfirming(false); onAction(r, "cancel"); }} style={{ padding: "6px 10px" }}>
+          Sí
+        </button>
+        <button type="button" disabled={busy} onClick={() => setConfirming(false)} style={{ padding: "6px 10px" }}>
+          No
+        </button>
+      </div>
+    );
   }
+
+  return (
+    <div className="hstack" style={{ gap: 6, flexWrap: "wrap" }}>
+      {actions.map((a) => (
+        <button
+          key={a}
+          type="button"
+          disabled={busy}
+          onClick={() => (a === "cancel" ? setConfirming(true) : onAction(r, a))}
+          style={{ padding: "6px 10px" }}
+        >
+          {a === "cancel" && isPaid ? "Cancelar y reembolsar" : ACTION_LABEL[a]}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export default function VendorDashboardClient({ userEmail, restaurant, reservations }: any) {
@@ -34,6 +70,15 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
   // hydration-safe date formatting
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // Re-render once a minute: statuses and allowed actions depend on the clock
+  // (PENDING -> EXPIRADA, "No presentado" appears once the time has passed),
+  // and nothing else would trigger a render on a dashboard left open.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setTick((x) => x + 1), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
 
   // simple "copied" feedback per reservation id
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -112,6 +157,29 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setErr(data?.error ?? "No se pudo iniciar la suscripción");
     window.location.href = data.url;
+  }
+
+  // Which reservation has a request in flight (disables its buttons)
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function runAction(r: any, action: ReservationAction) {
+    setErr(null);
+    setBusyId(r.id);
+    try {
+      const res = await fetch(`/api/vendor/reservations/${r.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) setErr(data?.error ?? "No se pudo actualizar la reserva");
+    } finally {
+      setBusyId(null);
+      // Realtime would also deliver the change; reloading here makes the
+      // button feel instant and also covers the error case (e.g. "the guest
+      // just paid" -> the row now shows PAGADO).
+      reloadReservations();
+    }
   }
 
   function reservationUrl(id: string) {
@@ -395,12 +463,13 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
               <th>Comensales</th>
               <th>Depósito</th>
               <th>Enlace</th>
+              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {rs.map((r: any) => (
               <tr key={r.id} className={justPaid.has(r.id) ? "justPaid" : undefined}>
-                <td>{statusLabel(r.status)}</td>
+                <td>{statusLabel(r)}</td>
                 <td>{formatDateSafe(r.datetime_iso)}</td>
                 <td>{r.customer_name || "—"}</td>
                 <td>{r.party_size}</td>
@@ -421,12 +490,15 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
                     </button>
                   </div>
                 </td>
+                <td>
+                  <RowActions r={r} busy={busyId === r.id} onAction={runAction} />
+                </td>
               </tr>
             ))}
 
             {rs.length === 0 ? (
               <tr>
-                <td colSpan={6} className="small">
+                <td colSpan={7} className="small">
                   Aún no hay reservas.
                 </td>
               </tr>
@@ -443,9 +515,9 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
           rs.map((r: any) => (
             <div key={r.id} className={justPaid.has(r.id) ? "resCard justPaid" : "resCard"}>
               <div className="resTop">
-                <span className={r.status === "PAID" ? "badge ok" : "badge"}>
+                <span className={isPositiveStatus(r) ? "badge ok" : "badge"}>
                   <span className="dot" />
-                  {statusLabel(r.status)}
+                  {statusLabel(r)}
                 </span>
 
                 <div className="hstack" style={{ gap: 8, flexWrap: "nowrap" }}>
@@ -492,6 +564,10 @@ export default function VendorDashboardClient({ userEmail, restaurant, reservati
                   </div>
                   <div className="small">{r.party_size}</div>
                 </div>
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <RowActions r={r} busy={busyId === r.id} onAction={runAction} />
               </div>
             </div>
           ))

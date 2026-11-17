@@ -28,6 +28,315 @@ This file records **what changed, why, and how we checked it**, so any developer
 
 ---
 
+## 2026-11-17: Reservation lifecycle, create-link screen, quick wins (backlog 8, 10, 12, 13, 15)
+
+**Branch:** `staging`. The critical fixes were pushed first as `9ff9d7e`.
+
+**⚠️ Requires running `migrations/004_reservation_lifecycle.sql` in the Supabase SQL Editor**
+before using **Cancelar y reembolsar**. The refund itself would still go
+through, but saving it needs the new `refunded_at` column, so the app would
+report "Reembolso hecho pero no se pudo guardar".
+
+### Product decisions (agreed with the owner)
+
+| Question | Decision |
+|---|---|
+| Restaurant cancels a **paid** reservation | **Full automatic refund** through Stripe, any time. The restaurant decides; the app doesn't enforce the 24h policy text (it's the restaurant's own policy, and it may want to make exceptions). |
+| Restaurant cancels an **unpaid** reservation | The link stops working, and any payment page the guest has open is closed. |
+| Guest doesn't show up | **No presentado**: the restaurant keeps the deposit. Only possible once the reservation time has passed. |
+| Guest came | **Asistió**: a record only, no money moves (the deposit is applied to the bill at the table). Only possible once the reservation time has passed (see the correction below). |
+| Unpaid link, reservation time passes | **EXPIRED** automatically. The guest can't start a payment any more. |
+| Guest receipts / invoices | Not needed. A deposit isn't a sale; it's either deducted from the bill or refunded. |
+
+---
+
+### 8. Reservation lifecycle: cancel + refund, no-show, attended, auto-expire
+
+**The problem.** The `status` column could already hold `CANCELED` and `EXPIRED`,
+but nothing ever set them. The restaurant had no way to cancel, refund or
+record a no-show from the app, and a link stayed payable forever, even weeks
+after the reservation date.
+
+**Step 1: draw the state machine first, code second.**
+
+```
+PENDING ──pay──▶ PAID ──▶ ATTENDED   (deposit applied to the bill)
+   │               │ ╲
+   │               │  ▶ NO_SHOW      (restaurant keeps the deposit)
+   │               ▼
+   ├──cancel──▶ CANCELED             (if paid: full refund via Stripe)
+   └──time passes unpaid──▶ EXPIRED
+```
+
+Small extras, each with a reason:
+- `NO_SHOW` ↔ `ATTENDED` can be switched, to undo a mis-click.
+- `NO_SHOW` → cancel (refund) is allowed: the restaurant changes its mind ("the guest called, they had an emergency").
+- `CANCELED` and `EXPIRED` are final.
+
+**Step 2: the database (`migrations/004_reservation_lifecycle.sql`).**
+
+```sql
+alter table public.reservations add column if not exists refunded_at timestamptz;
+alter table public.reservations add column if not exists stripe_refund_id text;
+
+alter table public.reservations add constraint reservations_status_check
+  check (status in ('PENDING', 'PAID', 'CANCELED', 'EXPIRED', 'NO_SHOW', 'ATTENDED'));
+```
+
+Why the `check` constraint: until now the column accepted **any** text. That's why
+the code was full of defensive `toUpperCase()` calls and `"CANCELLED"` spellings.
+I checked the live data before adding it (every row was `PAID`), so the
+constraint can't fail on existing rows. `supabase.sql` got the same changes.
+
+**Step 3: one shared rules file (`lib/reservation-status.ts`).**
+It uses the same pattern as `lib/subscription.ts`: a pure module (no Stripe, no
+database) imported by the dashboard (which buttons to show), the guest page (what
+to say) **and** the API (what to allow), so they can't drift apart.
+
+```ts
+export function allowedActions(r, now = new Date()): ReservationAction[] {
+  const passed = hasReservationTimePassed(r, now);
+  switch (effectiveStatus(r, now)) {
+    case "PENDING":  return ["cancel"];
+    case "PAID":     return passed ? ["attended", "no_show", "cancel"] : ["cancel"];
+    case "NO_SHOW":  return passed ? ["attended", "cancel"] : ["cancel"];
+    case "ATTENDED": return passed ? ["no_show"] : [];
+    default:         return []; // CANCELED and EXPIRED are final
+  }
+}
+```
+
+**Step 4: auto-expire without a cron job.**
+Alternatives considered:
+
+| Option | Verdict |
+|---|---|
+| Scheduled job (Vercel Cron / `pg_cron`) every few minutes | More setup and infra for an MVP; a row is still wrong for up to N minutes. |
+| **Lazy expiry + "effective status"** | ✅ chosen. No infra. Correct at every moment. |
+
+How it works:
+1. `effectiveStatus()`: a PENDING row whose time has passed is *treated and shown*
+   as EXPIRED, even before the database is updated.
+2. Whenever the server touches reservations (dashboard load, guest page, guest
+   checkout), `expireOverdueForRestaurant()` / `expireIfOverdue()` in
+   `lib/reservation-lifecycle.ts` write `EXPIRED`, **conditional on `status = PENDING`**
+   so they can never overwrite a payment that lands at the same moment.
+3. The dashboard re-renders once a minute, so a row on a screen left open
+   flips to EXPIRADA by itself.
+
+The time comparison is done in JavaScript (`Date.parse`), not SQL:
+`datetime_iso` is a *text* column, and comparing text is only correct if every
+row has exactly the same format.
+
+**Step 5: an expired link that gets paid anyway is still PAID.**
+Edge case: the guest opened the Stripe page at 20:25 for a 20:30 reservation
+and paid at 20:32. The money is real, so `markReservationPaidFromSession` now
+accepts `EXPIRED → PAID` as well as `PENDING → PAID`:
+
+```ts
+.in("status", ["PENDING", "EXPIRED"])   // was .eq("status", "PENDING")
+```
+
+I found a related bug in that same function while doing this. The "already processed"
+check was `status === "PAID"`. With the new statuses, a late webhook for a reservation
+already marked **ATTENDED** would have been flagged as "needs manual review". It now
+recognises the payment by **its own id**, whatever the status is:
+
+```ts
+if (paymentIntentId && reservation.stripe_payment_intent_id === paymentIntentId) {
+  return { ok: true, alreadyPaid: true };
+}
+```
+
+**Step 6: the action API (`POST /api/vendor/reservations/:id/status`).**
+The route is thin: login, zod input (`cancel | no_show | attended`), then delegate to
+`applyReservationAction()` in `lib/reservation-lifecycle.ts`, which:
+
+1. Loads the reservation, then its restaurant **filtered by `owner_user_id`**.
+   Another owner's id gives "not found", the same answer as a wrong id, so nobody
+   can probe for ids.
+2. Re-checks `allowedActions()` on the server. Hiding a button is not security.
+3. Does the work. Three cases:
+
+**a) Cancel a paid reservation = refund, then record it.**
+```ts
+refund = await stripe.refunds.create(
+  { payment_intent: reservation.stripe_payment_intent_id, reason: "requested_by_customer" },
+  { stripeAccount: restaurant.stripe_account_id,           // the deposit lives on THEIR account
+    idempotencyKey: `refund_res_${reservation.id}` }       // double click = still one refund
+);
+await admin.from("reservations")
+  .update({ status: "CANCELED", refunded_at: now, stripe_refund_id: refund.id })
+  .eq("id", reservation.id);
+```
+Why **refund first, database second**: if the order were reversed and Stripe
+failed, the app would say "refunded" while the guest never got the money. In this
+order, the worst case is "refunded but not saved yet". The error message says so,
+and clicking again is safe because the idempotency key makes Stripe return the
+*same* refund instead of making a second one.
+
+**b) Cancel an unpaid reservation = close the guest's payment page.**
+If the guest has the Stripe Checkout page open, we `expire` that session so it
+can't be paid any more. One race needs handling: the guest pays a second before the
+restaurant clicks. In that case Stripe says the session is already `complete`, so
+we **record the payment** (never lose money) and answer *"El cliente acaba de
+pagar… pulsa Cancelar otra vez para reembolsar"*.
+
+**c) Attended / no-show = a status change only.**
+```ts
+.update({ status: target }).eq("id", reservation.id).eq("status", current)
+```
+The `.eq("status", current)` is the same conditional-update idea as the payment
+code. If the status changed between showing the button and clicking it, nothing is
+written and the user is asked to reload.
+
+**Step 7: refunds made outside the app.**
+The dashboard tells restaurants to manage refunds in their Stripe Dashboard too.
+Without handling that, a refund done there would leave the reservation showing
+PAGADO. The Connect webhook now also handles `charge.refunded`:
+- **full** refund of a PAID/NO_SHOW reservation → CANCELED + `refunded_at`;
+- full refund of an ATTENDED reservation (a goodwill gesture) → keeps ATTENDED and gets a "· reembolsado" mark;
+- **partial** refunds (the restaurant keeps part of the deposit) → ignored, deliberately.
+
+It also fires for our own cancel button's refunds. That's harmless: by then the row
+is already CANCELED, so the conditional updates match nothing.
+
+**Step 8: UI.**
+- **Dashboard:** a new "Acciones" column (and the same buttons on the mobile cards).
+  **Cancelar y reembolsar** asks inline *"¿Reembolsar €10.00? Sí / No"*: a second
+  click instead of a `confirm()` popup, because money moves.
+- **Guest page:** instead of always showing the pay button, it now says what happened
+  ("El restaurante ha cancelado esta reserva. El depósito se ha reembolsado…",
+  "Este enlace ha caducado…", "Depósito pagado ✅").
+- **Labels:** PENDIENTE changed from ❌ to ⏳. It isn't an error; it's waiting.
+
+---
+
+**Correction after the owner's testing: "Asistió" was possible before the reservation time.**
+My first version allowed it at any time after payment, assuming guests sometimes
+arrive early. The owner's rule: attendance can only be recorded **once the
+reservation time has passed**, the same as no-show. The fix is in the one shared
+rules file, so the dashboard button and the API both follow it:
+
+```ts
+// before
+case "PAID":    return passed ? ["attended", "no_show", "cancel"] : ["attended", "cancel"];
+case "NO_SHOW": return ["attended", "cancel"];
+// after
+case "PAID":    return passed ? ["attended", "no_show", "cancel"] : ["cancel"];
+case "NO_SHOW": return passed ? ["attended", "cancel"] : ["cancel"];
+```
+
+The NO_SHOW line can only matter for odd data, since NO_SHOW itself needs the
+time to have passed. It's checked anyway, so the rule doesn't depend on how a row
+got its status.
+Checked at the boundary: 1 second before the time → only `cancel`; at the
+exact time → `attended`, `no_show`, `cancel`.
+Because the server re-checks `allowedActions()`, a request sent straight to
+the API (bypassing the hidden button) is refused with 409 as well.
+
+---
+
+### 10. Create-link screen
+
+| Before | After | Why |
+|---|---|---|
+| Name prefilled with "Juan Pérez" | Empty, placeholder "Ej.: María García" | A forgotten default got sent as a real guest name. |
+| Deposit field could not be empty: clearing it put a `0` straight back | Can be empty; empty counts as €0 and shows *"El depósito mínimo es €0.50"* on submit | Owner request: the field felt "locked". |
+| Party size: same problem | Same fix | Consistency. |
+| `10,50` (Spanish keyboard) unreliable in `type="number"` | `type="text"` + `inputMode="decimal"`, comma accepted | Spain uses a decimal comma. |
+| `alert()` with the link, then redirect | Result screen: link, **Copiar enlace**, **Enviar por WhatsApp**, **Crear otro enlace** | Restaurants send these links by WhatsApp. |
+| Double click created two links | Button disabled while saving ("Creando…") | Duplicate links. |
+
+**Root cause of the "locked" field.** The value was stored as a *number*:
+
+```tsx
+// before
+const [depositEUR, setDepositEUR] = useState(10);
+onChange={e => setDepositEUR(parseFloat(e.target.value || "0"))}   // "" -> 0, re-rendered as "0"
+```
+
+React re-renders the input with the state value, so an empty field became `0`
+immediately. **The fix:** keep what the user typed (a string) and convert only on submit:
+
+```tsx
+const [depositEUR, setDepositEUR] = useState("10");
+function parseEurosToCents(input: string): number {
+  const n = Number(input.trim().replace(",", "."));
+  return Number.isFinite(n) ? Math.round(n * 100) : 0;   // empty -> 0 -> min-deposit message
+}
+```
+
+The WhatsApp button opens `https://wa.me/?text=…`. With no phone number,
+WhatsApp lets the restaurant pick the chat. The text is prefilled:
+*"Hola María, para confirmar tu reserva en {restaurante} el {fecha}, paga el
+depósito de €10.00 aquí: {link}"*.
+
+The client-side checks are for instant feedback only. The API still enforces the
+same rules, so bypassing the form changes nothing.
+
+---
+
+### 12. One rule for "active subscription" (`trialing`)
+
+`/api/admin/overview` counted `trialing` as active, but `lib/subscription.ts`
+(used by the dashboard and the reservations API) didn't. A restaurant on a free
+trial would have seen "en periodo de prueba" yet been unable to create links.
+`isSubscriptionActive()` now accepts both. The admin route and
+`vendor/reservations/new/page.tsx` (which had its own hand-written copy of the
+rule) now call it instead of reimplementing it.
+
+The admin page was titled "Restaurantes activos" and said it filtered by
+`status = active`, but the API returns **all** restaurants. It's now
+titled "Restaurantes", shows "N restaurantes · M con suscripción activa", and
+uses the same coloured badge as the dashboard.
+
+### 13. README
+
+Rewritten. The old one was the original MVP brief ("You asked for…"), mentioned a
+"demo password gate" that no longer exists, and described the pre-webhook payment
+flow. The new one covers what the app does, the architecture and design rules,
+the reservation state machine, the project layout and accurate local setup
+(migrations, both webhook forwards).
+
+### 15. Middleware ran on webhooks and guest routes
+
+```ts
+// before
+matcher: ["/vendor/:path*", "/admin/:path*", "/api/:path*"],
+// after
+matcher: ["/vendor/:path*", "/admin/:path*", "/api/vendor/:path*", "/api/admin/:path*"],
+```
+
+The middleware calls `supabase.auth.getUser()`, a network call to Supabase
+Auth, to refresh the login cookie. It ran on **every** `/api` request, including the
+Stripe webhooks and guest routes, which never have a login cookie. That added
+latency to every webhook (Stripe has a timeout) and every guest payment. It now
+only runs where a restaurant session is used.
+
+---
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | ✅ |
+| `npm run lint` | ✅ no new warnings |
+| `allowedActions` / `effectiveStatus` / labels, all 9 status × past/future cases (run against the real compiled file) | ✅ as in the table in step 3 |
+| README claims (Express accounts, `/auth/callback`) checked against the code | ✅ |
+| Refund, cancel, no-show, expiry against Stripe test mode | ✅ owner tested; the refund shows in the connected account's Stripe Dashboard. Found "attended too early" (fixed above). |
+
+**Manual tests:**
+1. Run `migrations/004_reservation_lifecycle.sql`.
+2. **Create screen:** clear the deposit field (it stays empty). Click Crear: "El depósito mínimo es €0.50". Type `10,50`: the link is created. Copy works, and WhatsApp opens with the prefilled text.
+3. **Cancel unpaid:** open the guest link, click Pagar (the Stripe page opens), then cancel the reservation from the dashboard. Reload the Stripe page: it's expired. The guest page says it was cancelled.
+4. **Cancel paid:** pay a deposit (`4242…`), then **Cancelar y reembolsar** → Sí. The row shows "✖ CANCELADA · reembolsado". The refund is visible in the connected account's Stripe test Dashboard.
+5. **External refund:** pay another deposit and refund it from the Stripe Dashboard. The row changes by itself (Connect webhook + Realtime).
+6. **Expiry:** create a link for a few minutes from now and don't pay it. After the time passes, the dashboard shows EXPIRADA within a minute and the guest page says the link expired.
+7. **No-show / attended:** "No presentado" and "Asistió" only appear on a paid reservation once its time has passed.
+
+---
+
 ## 2026-11-17: Critical fixes: data lockdown, payment verification, Connect webhook, deposit limits, timezone, invoice data
 
 **Branch:** `staging`. Previous work pushed first as `4c8dc40`.
@@ -514,14 +823,14 @@ Priority: 🔴 must fix before real users · 🟠 needed for a usable MVP · �
 | 5 | ✅ | ~~Timezone bugs.~~ Fixed: `lib/datetime.ts` (store UTC, show Europe/Madrid). Canary Islands still not handled. | form, guest page, dashboard |
 | 6 | ⏸️ | Production setup: custom SMTP (or OAuth instead of magic links), live keys, live webhook endpoints (platform **and** Connect), Connect platform profile, prod redirect URLs, Vercel env vars. *Deferred by decision.* | config |
 | 7 | 🟡 | Invoicing: NIF/CIF + billing address now collected ✅. **IVA line deliberately skipped for now** (owner decision). | `subscribe/route.ts`, Stripe settings |
-| 8 | 🟠 | No way to cancel a reservation / refund / mark no-show. `CANCELED` and `EXPIRED` statuses exist but nothing sets them; links stay payable after the reservation date. | dashboard + new API |
+| 8 | ✅ | ~~No way to cancel / refund / mark no-show; links payable forever.~~ Fixed: `lib/reservation-status.ts`, `lib/reservation-lifecycle.ts`, migration 004. | dashboard + status API |
 | 9 | 🟠 | No email notifications (Resend is configured in `.env` but unused): "deposit received" to the restaurant, confirmation to the guest. | new |
-| 10 | 🟠 | Create-reservation UX: prefilled "Juan Pérez", `alert()` popup for the link. It should show the link with copy/WhatsApp buttons. | `new-reservation-client.tsx` |
+| 10 | ✅ | ~~Prefilled "Juan Pérez", `alert()` popup, deposit field couldn't be empty.~~ Fixed: result screen with Copy/WhatsApp. | `new-reservation-client.tsx` |
 | 11 | 🟡 | Dashboard shows only the latest 25 reservations (no pagination/search/filter). | dashboard |
-| 12 | 🟡 | `trialing` treated as active in admin but not elsewhere; admin title says "activos" but lists all restaurants. | admin |
-| 13 | 🟡 | README outdated (mentions "demo password gate"; no `ADMIN_EMAILS`, migrations, realtime). | `README.md` |
+| 12 | ✅ | ~~`trialing` inconsistent; admin title wrong.~~ Fixed: one `isSubscriptionActive()`. | admin, `lib/subscription.ts` |
+| 13 | ✅ | ~~README outdated.~~ Rewritten. | `README.md` |
 | 14 | 🟡 | No automated tests, no error monitoring. | — |
-| 15 | 🟡 | Middleware runs `supabase.auth.getUser()` on every `/api/*` call, including the Stripe webhook and guest routes (extra latency). | `middleware.ts` |
+| 15 | ✅ | ~~Middleware ran `getUser()` on webhooks and guest routes.~~ Fixed: narrower matcher. | `middleware.ts` |
 
 ---
 

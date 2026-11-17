@@ -1,5 +1,6 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import NewReservationClient from "./new-reservation-client";
+import { isSubscriptionActive } from "@/lib/subscription";
 
 export default async function NewReservationPage() {
   const supabase = supabaseServer();
@@ -18,10 +19,10 @@ export default async function NewReservationPage() {
     return <main className="card"><h1 style={{ marginTop: 0 }}>Crear reserva</h1><p className="small" style={{ color: "var(--danger)" }}>Falta el perfil del restaurante.</p></main>;
   }
 
-  const subActive = restaurant.subscription_status === "active" &&
-    (!restaurant.subscription_current_period_end || new Date(restaurant.subscription_current_period_end) > new Date());
+  // Shared rule (was a hand-written copy of it here)
+  const subActive = isSubscriptionActive(restaurant);
   const connectReady = Boolean(restaurant.stripe_account_id) && Boolean(restaurant.stripe_onboarding_complete);
   const blocked = !(subActive && connectReady);
 
-  return <NewReservationClient restaurantId={restaurant.id} blocked={blocked} />;
+  return <NewReservationClient restaurantId={restaurant.id} restaurantName={restaurant.name ?? ""} blocked={blocked} />;
 }

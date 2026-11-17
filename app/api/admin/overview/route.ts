@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { isSubscriptionActive } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -44,7 +45,8 @@ export async function GET() {
 
     const enriched = (restaurants ?? []).map((r: any) => ({
       ...r,
-      is_active: r.subscription_status === "active" || r.subscription_status === "trialing",
+      // Same rule as the dashboard and the reservations API
+      is_active: isSubscriptionActive(r),
     }));
 
     return NextResponse.json(

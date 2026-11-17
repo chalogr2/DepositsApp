@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
+import { subscriptionLabel } from "@/lib/subscription";
+import { formatReservationDate } from "@/lib/datetime";
 
 type AnyRow = Record<string, any>;
 
@@ -38,7 +40,7 @@ export default function AdminPage() {
   return (
     <main className="card">
       <div className="hstack" style={{ justifyContent: "space-between" }}>
-        <h1 style={{ marginTop: 0 }}>Restaurantes activos</h1>
+        <h1 style={{ marginTop: 0 }}>Restaurantes</h1>
         <button onClick={load} disabled={loading}>
           {loading ? "Actualizando..." : "Actualizar"}
         </button>
@@ -50,8 +52,10 @@ export default function AdminPage() {
         </p>
       ) : null}
 
+      {/* Was titled "activos" and claimed to filter by status, but the API
+          returns ALL restaurants. Now it says so and shows a count instead. */}
       <p className="small">
-        Mostrando restaurantes con <code>subscription_status = active</code>.
+        {restaurants.length} restaurantes · {restaurants.filter((r) => r.is_active).length} con suscripción activa.
       </p>
 
       <table className="table">
@@ -76,15 +80,20 @@ export default function AdminPage() {
                 <code>{r.stripe_account_id ?? "—"}</code>
               </td>
               <td>{String(r.stripe_onboarding_complete)}</td>
-              <td>{r.subscription_status}</td>
-              <td>{r.subscription_current_period_end ?? "—"}</td>
+              <td>
+                <span className={r.is_active ? "badge ok" : "badge bad"}>
+                  <span className="dot" />
+                  {subscriptionLabel(r)}
+                </span>
+              </td>
+              <td>{r.subscription_current_period_end ? formatReservationDate(r.subscription_current_period_end, "short") : "—"}</td>
             </tr>
           ))}
 
           {!loading && (restaurants ?? []).length === 0 ? (
             <tr>
               <td colSpan={6} className="small">
-                Aún no hay restaurantes activos.
+                Aún no hay restaurantes.
               </td>
             </tr>
           ) : null}

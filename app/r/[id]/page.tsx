@@ -1,26 +1,29 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import PayButton from "./pay-button";
 import { formatReservationDate } from "@/lib/datetime";
+import { statusLabel, isPositiveStatus, PAID_STATUSES } from "@/lib/reservation-status";
+import { expireIfOverdue } from "@/lib/reservation-lifecycle";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
 
-function statusLabel(raw: unknown) {
-  const s = String(raw ?? "").toUpperCase();
-
-  switch (s) {
-    case "PAID":
-      return "✅ PAGADO";
-    case "PENDING":
-      return "❌ PENDIENTE";
-    case "CANCELED":
-      return "❌ CANCELADO";
-    case "EXPIRED":
-      return "❌ EXPIRADA";
-    default:
-      return s || "—";
+/** What the guest sees under the details, depending on the status. */
+function GuestFooter({ status, refunded, reservationId }: { status: string; refunded: boolean; reservationId: string }) {
+  if (status === "PENDING") return <PayButton reservationId={reservationId} />;
+  if (status === "CANCELED") {
+    return (
+      <p className="small">
+        El restaurante ha cancelado esta reserva.
+        {refunded ? " El depósito se ha reembolsado a tu tarjeta (puede tardar 5–10 días en aparecer)." : ""}
+      </p>
+    );
   }
+  if (status === "EXPIRED") {
+    return <p className="small">Este enlace ha caducado porque la hora de la reserva ya pasó. Contacta con el restaurante.</p>;
+  }
+  if (PAID_STATUSES.has(status)) return <p className="small">Depósito pagado ✅</p>;
+  return null;
 }
 
 export default async function ReservaPage({ params }: { params: { id: string } }) {
@@ -47,18 +50,18 @@ export default async function ReservaPage({ params }: { params: { id: string } }
     .eq("id", reservation.restaurant_id)
     .single();
 
-  // Normalize status to avoid case mismatches ("PAID" vs "paid")
-  const status = String(reservation.status ?? "").toLowerCase();
-  const isPagado = status === "paid";
+  // A PENDING link past its reservation time becomes EXPIRED (saved to the DB)
+  reservation.status = await expireIfOverdue(reservation);
+  const status = String(reservation.status ?? "").toUpperCase();
 
   return (
     <main className="card">
       <h1 style={{ marginTop: 0 }}>Confirma tu reserva</h1>
 
       <div className="hstack">
-        <span className={isPagado ? "badge ok" : "badge"}>
+        <span className={isPositiveStatus(reservation) ? "badge ok" : "badge"}>
           <span className="dot" />
-          Estado: {statusLabel(reservation.status)}
+          Estado: {statusLabel(reservation)}
         </span>
 
         <span className="badge">
@@ -108,11 +111,7 @@ export default async function ReservaPage({ params }: { params: { id: string } }
 
       <div className="spacer" />
 
-      {isPagado ? (
-        <p className="small">Ya está pagado ✅</p>
-      ) : (
-        <PayButton reservationId={reservation.id} />
-      )}
+      <GuestFooter status={status} refunded={Boolean(reservation.refunded_at)} reservationId={reservation.id} />
 
       <div className="spacer" />
       <p className="small">Los reembolsos los gestiona el restaurante y vuelven a la tarjeta original.</p>

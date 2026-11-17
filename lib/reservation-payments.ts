@@ -50,7 +50,7 @@ export async function markReservationPaidFromSession(
 
   const { data: reservation } = await admin
     .from("reservations")
-    .select("id, restaurant_id, status, deposit_cents")
+    .select("id, restaurant_id, status, deposit_cents, stripe_payment_intent_id")
     .eq("id", reservationId)
     .maybeSingle();
   if (!reservation) return fail(404, "Reservation not found");
@@ -70,12 +70,23 @@ export async function markReservationPaidFromSession(
     return fail(409, "Paid amount does not match the deposit");
   }
 
-  if (String(reservation.status).toUpperCase() === "PAID") return { ok: true, alreadyPaid: true };
-
-  // Conditional update: only PENDING -> PAID. If two calls race, the second
-  // one matches zero rows instead of overwriting anything.
   const paymentIntentId =
     typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null;
+
+  // Already recorded THIS payment? Then we're done, whatever the status is now
+  // (PAID, ATTENDED, NO_SHOW, or CANCELED after a refund). Before the
+  // reservation lifecycle existed this only checked status === "PAID", so a
+  // late webhook for an ATTENDED reservation would have been flagged as a problem.
+  if (paymentIntentId && reservation.stripe_payment_intent_id === paymentIntentId) {
+    return { ok: true, alreadyPaid: true };
+  }
+  if (String(reservation.status).toUpperCase() === "PAID") return { ok: true, alreadyPaid: true };
+
+  // Conditional update: only PENDING/EXPIRED -> PAID. If two calls race, the
+  // second one matches zero rows instead of overwriting anything.
+  // EXPIRED is accepted on purpose: it only means "not paid before the
+  // reservation time". If the guest's payment page was already open and they
+  // paid late, the money is real, so the reservation is PAID.
 
   const { data: updated, error } = await admin
     .from("reservations")
@@ -86,14 +97,14 @@ export async function markReservationPaidFromSession(
       stripe_checkout_session_id: session.id,
     })
     .eq("id", reservation.id)
-    .eq("status", "PENDING")
+    .in("status", ["PENDING", "EXPIRED"])
     .select("id");
 
   if (error) throw new Error(`Supabase update (markReservationPaid) failed: ${error.message}`);
 
   if (!updated?.length) {
-    // Not PENDING any more: either the parallel call just set PAID (fine), or
-    // it was CANCELED/EXPIRED and was paid anyway (needs a manual refund).
+    // Not PENDING/EXPIRED any more: either the parallel call just set PAID
+    // (fine), or it was CANCELED and paid anyway (needs a manual refund).
     const { data: now } = await admin.from("reservations").select("status").eq("id", reservation.id).single();
     if (String(now?.status).toUpperCase() === "PAID") return { ok: true, alreadyPaid: true };
     return fail(409, `Reservation is ${now?.status}; payment ${paymentIntentId} needs manual review`);

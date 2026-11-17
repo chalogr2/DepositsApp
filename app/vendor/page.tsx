@@ -5,6 +5,7 @@ import Stripe from "stripe";
 import { stripePlatform } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { syncRestaurantSubscription } from "@/lib/billing-sync";
+import { expireOverdueForRestaurant } from "@/lib/reservation-lifecycle";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -115,6 +116,11 @@ export default async function VendorPage({
   const name = String(restaurant.name ?? "").trim();
   const needsName = !name || name === "My Restaurant";
   if (needsName) redirect("/vendor/onboarding");
+
+  // Unpaid links whose reservation time has passed -> EXPIRED (no cron job;
+  // see lib/reservation-lifecycle.ts). Failure is harmless: the UI already
+  // shows them as EXPIRADA via effectiveStatus().
+  await expireOverdueForRestaurant(restaurant.id).catch(() => {});
 
   const { data: reservations } = await supabase
     .from("reservations")

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { stripePlatform, asConnectedAccount } from "@/lib/stripe";
 import { MAX_DEPOSIT_CENTS, MIN_DEPOSIT_CENTS } from "@/lib/config";
+import { expireIfOverdue } from "@/lib/reservation-lifecycle";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
   // ✅ Fetch minimum reservation fields
   const { data: reservation } = await admin
     .from("reservations")
-    .select("id, restaurant_id, status, deposit_cents")
+    .select("id, restaurant_id, status, deposit_cents, datetime_iso")
     .eq("id", parsed.data.reservationId)
     .single();
 
@@ -34,9 +35,11 @@ export async function POST(req: Request) {
   }
 
   // ✅ Server-side paid gate
-  const status = normalizeStatus(reservation.status);
+  // A PENDING link whose reservation time has passed is EXPIRED: written to
+  // the DB here, so the dashboard shows it too (lib/reservation-lifecycle.ts).
+  const status = normalizeStatus(await expireIfOverdue(reservation));
 
-  if (status === "PAID") {
+  if (status === "PAID" || status === "ATTENDED" || status === "NO_SHOW") {
     return NextResponse.json({ error: "Already paid" }, { status: 409 });
   }
   if (status === "CANCELED" || status === "CANCELLED") {

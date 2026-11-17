@@ -14,13 +14,19 @@ export type SubscriptionFields = {
   subscription_current_period_end?: string | null;
 };
 
+/** Statuses that unlock the app. "trialing" = a free trial on the Stripe price. */
+const ACTIVE_STATUSES = new Set(["active", "trialing"]);
+
 /**
- * Active = status "active" AND the paid period has not ended yet.
+ * Active = status "active" or "trialing" AND the period has not ended yet.
+ * (Before, admin counted "trialing" as active but the dashboard and the
+ * reservations API didn't, so a trial user saw "en periodo de prueba" yet
+ * could not create links.)
  * A missing period end is treated as "no known end" (still active), which
  * matches the previous behaviour.
  */
 export function isSubscriptionActive(r: SubscriptionFields, now: Date = new Date()): boolean {
-  if (r.subscription_status !== "active") return false;
+  if (!ACTIVE_STATUSES.has(String(r.subscription_status))) return false;
   if (!r.subscription_current_period_end) return true;
   return new Date(r.subscription_current_period_end).getTime() > now.getTime();
 }
@@ -36,7 +42,7 @@ export function isSubscriptionActive(r: SubscriptionFields, now: Date = new Date
 export function subscriptionLabel(r: SubscriptionFields, now: Date = new Date()): string {
   const status = String(r.subscription_status ?? "inactive");
 
-  if (status === "active" && !isSubscriptionActive(r, now)) return "caducada";
+  if (ACTIVE_STATUSES.has(status) && !isSubscriptionActive(r, now)) return "caducada";
 
   switch (status) {
     case "active":

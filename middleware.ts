@@ -43,6 +43,10 @@ export async function middleware(req: NextRequest) {
   return res;
 }
 
+// Only routes that use the restaurant's login session. Previously "/api/:path*"
+// also matched the Stripe webhooks and the guest routes: they have no login
+// cookie, but each request still paid for a getUser() call to Supabase Auth
+// (extra latency on every webhook, and webhooks have a timeout).
 export const config = {
-  matcher: ["/vendor/:path*", "/admin/:path*", "/api/:path*"],
+  matcher: ["/vendor/:path*", "/admin/:path*", "/api/vendor/:path*", "/api/admin/:path*"],
 };

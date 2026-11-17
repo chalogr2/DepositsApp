@@ -31,17 +31,24 @@ create table if not exists public.reservations (
   party_size int not null default 2,
   deposit_cents int not null default 0,
   policy_text text not null default '',
-  status text not null default 'PENDING',
+  -- PENDING -> PAID -> ATTENDED | NO_SHOW ; PENDING/PAID -> CANCELED ; PENDING -> EXPIRED
+  -- (see migrations/004_reservation_lifecycle.sql and lib/reservation-status.ts)
+  status text not null default 'PENDING'
+    constraint reservations_status_check
+    check (status in ('PENDING', 'PAID', 'CANCELED', 'EXPIRED', 'NO_SHOW', 'ATTENDED')),
 
   stripe_payment_intent_id text,
   stripe_checkout_session_id text,
   paid_at timestamptz,
+  refunded_at timestamptz,
+  stripe_refund_id text,
 
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists reservations_restaurant_idx on public.reservations(restaurant_id);
+create index if not exists reservations_payment_intent_idx on public.reservations(stripe_payment_intent_id);
 
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
